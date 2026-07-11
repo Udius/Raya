@@ -1,0 +1,4 @@
+/home/udius/Raya/build/CMakeFiles/event_queue.dir
+/home/udius/Raya/build/CMakeFiles/event_tests.dir
+/home/udius/Raya/build/CMakeFiles/edit_cache.dir
+/home/udius/Raya/build/CMakeFiles/rebuild_cache.dir

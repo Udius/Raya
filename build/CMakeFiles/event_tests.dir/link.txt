@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/event_tests.dir/link.d CMakeFiles/event_tests.dir/tests/EventQueueTests.cpp.o CMakeFiles/event_tests.dir/tests/TelegramClientTests.cpp.o -o event_tests  libevent_queue.a /usr/lib/x86_64-linux-gnu/libgtest.a /usr/lib/x86_64-linux-gnu/libgtest_main.a -lpthread /usr/lib/x86_64-linux-gnu/libgtest.a
