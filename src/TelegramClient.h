@@ -10,16 +10,20 @@
 #include <memory>
 #include <condition_variable>
 #include <queue>
+#include <future>
+#include <unordered_set>
 
-// Forward declaration для TDLib (в реальности включите td/telegram/Client.h)
-namespace td { class ClientManager; }
+// TDLib
+#include <td/telegram/Client.h>
+#include <td/telegram/td_api.h>
+#include <td/telegram/td_api.hpp>
 
 namespace telegram {
 
 class TelegramClient : public ITelegramClient {
 public:
     explicit TelegramClient(const RetryPolicy& defaultPolicy = RetryPolicy{});
-    ~TelegramClient();
+    ~TelegramClient() override;
 
     // ITelegramClient
     AFuture<void> connect(const TdConfig& config) override;
@@ -45,22 +49,46 @@ public:
     void setRetryPolicy(const RetryPolicy& policy) override;
 
 private:
-    // Вспомогательные методы для работы с TDLib
-    void initTdLib();
-    void shutdownTdLib();
-    void runReceiveLoop(); // поток для td::ClientManager::receive()
+    using RequestId = std::uint64_t;
+    using PromisePtr = std::shared_ptr<std::promise<std::unique_ptr<td::td_api::Object>>>;
 
-    template<typename T>
-    AFuture<T> sendRequestAndWait(const std::string& requestJson);
+    // ---- Отправка запроса с использованием object_ptr (td::td_api::object_ptr) ----
+    AFuture<std::unique_ptr<td::td_api::Object>> sendQuery(
+        td::td_api::object_ptr<td::td_api::Function> function);
 
-    // Обёртка с политикой повторных попыток
+    // Шаблонная обёртка – теперь принимает object_ptr, а не std::unique_ptr
+    template<typename ResponseT>
+    AFuture<ResponseT> sendQueryTyped(td::td_api::object_ptr<td::td_api::Function> function) {
+        auto futureObj = sendQuery(std::move(function));
+        return std::async(std::launch::async, [future = std::move(futureObj)]() mutable -> ResponseT {
+            auto raw = future.get();    // mutable позволяет вызвать get() на неконстантном future
+            if (!raw) {
+                throw std::runtime_error("Empty response");
+            }
+            if (raw->get_id() == td::td_api::error::ID) {
+                auto* err = static_cast<td::td_api::error*>(raw.get());
+                throw std::runtime_error("TDLib error: " + err->message_ +
+                                        " (code " + std::to_string(err->code_) + ")");
+            }
+            if (raw->get_id() != ResponseT::ID) {
+                throw std::runtime_error("Unexpected response type");
+            }
+            return std::move(static_cast<ResponseT&>(*raw));
+        });
+    }
+
+    // ---- Шаблон executeWithRetry (объявлен, определён ниже в .cpp) ----
     template<typename T>
     AFuture<T> executeWithRetry(std::function<AFuture<T>()> operation);
 
-    // Обработчик входящих обновлений
-    void processUpdate(const std::string& updateJson);
+    void initTdLib(const TdConfig& config);
+    void shutdownTdLib();
+    void runReceiveLoop();
+    void processResponse(td::ClientManager::Response response);
+    void processUpdate(td::td_api::object_ptr<td::td_api::Object> update);
+    void setAuthState(AuthState newState);
 
-    
+    AFuture<MessageResult> sendMessageImpl(int64_t chatId, const std::string& text);
 
 private:
     struct ListenerEntry {
@@ -73,11 +101,13 @@ private:
     std::atomic<AuthState> authState_{AuthState::LoggedOut};
     std::atomic<bool> running_{false};
 
-    std::unique_ptr<td::ClientManager> clientManager_; // реальный объект TDLib
+    std::unique_ptr<td::ClientManager> clientManager_;
+    td::ClientManager::ClientId clientId_{0};
     std::thread receiverThread_;
-    std::mutex receiveMutex_;
-    std::condition_variable receiveCv_;
-    std::queue<std::string> pendingUpdates_; // для асинхронной обработки
+
+    std::mutex pendingMutex_;
+    std::unordered_map<RequestId, PromisePtr> pendingRequests_;
+    std::atomic<RequestId> nextRequestId_{1};
 
     std::mutex listenerMutex_;
     std::vector<ListenerEntry> messageListeners_;
@@ -85,12 +115,8 @@ private:
 
     std::mutex deliveryMutex_;
     DeliveryCallback deliveryCallback_;
-
     std::mutex authCallbackMutex_;
     AuthStateCallback authStateCallback_;
-
-    // Отображение запросов (promise) по ID, если нужно
-    // std::unordered_map<std::uint64_t, std::shared_ptr<void>> pendingRequests_;
 };
 
 } // namespace telegram
