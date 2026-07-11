@@ -1,0 +1,37 @@
+# Сборка
+build/
+cmake-build-*/
+*.o
+*.so
+*.a
+*.exe
+*.dll
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Тесты (временные файлы)
+Testing/
+*.log
+*.trs
+
+# TDLib сессии (если используются)
+tdlib_session/
+*.tdb
+*.sqlite
+*.sqlite-journal
+
+# Артефакты CMake
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# Пользовательские конфиги
+*.user
+*.user.*

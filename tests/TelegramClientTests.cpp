@@ -1,6 +1,6 @@
 // tests/TelegramClientTests.cpp
 #include <gtest/gtest.h>
-#include "MockTelegramClient.h"
+#include "telegram/MockTelegramClient.h"
 #include <future>
 #include <chrono>
 

@@ -1,0 +1,10 @@
+[telegram]
+api_id = 33077431
+api_hash = "59d2ab11cd511544a4655e981f8c39b6"
+database_directory = "./tdlib_session"   # опционально
+
+[auth]
+papik_chat_id = 1357068827   # ваш Telegram ID (можно получить у @getmyid_bot)
+
+[logging]
+level = "info"      # debug, info, warn, error

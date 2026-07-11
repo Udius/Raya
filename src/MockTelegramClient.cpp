@@ -1,5 +1,5 @@
 // src/MockTelegramClient.cpp
-#include "MockTelegramClient.h"
+#include "telegram/MockTelegramClient.h"
 #include <stdexcept>
 #include <future>
 #include <chrono>
@@ -76,6 +76,7 @@ AFuture<MessageResult> MockTelegramClient::sendMessage(int64_t chatId, const std
     if (chatId == 0) {
         throw std::invalid_argument("chatId cannot be 0");
     }
+    sentMessages_.push_back({chatId, text});
     int64_t newId = nextMessageId_++;
     Message msg{newId, chatId, text, std::chrono::system_clock::now(), MessageStatus::Sent};
     messages_[chatId].push_back(msg);
@@ -199,6 +200,10 @@ void MockTelegramClient::setExpectedCode(const std::string& code) {
 
 void MockTelegramClient::setExpectedPassword(const std::string& password) {
     expectedPassword_ = password;
+}
+
+const std::vector<std::pair<int64_t, std::string>>& MockTelegramClient::getSentMessages() const {
+    return sentMessages_;
 }
 
 } // namespace telegram
