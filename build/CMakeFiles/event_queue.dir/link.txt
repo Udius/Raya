@@ -1,2 +1,0 @@
-/usr/bin/ar qc libevent_queue.a CMakeFiles/event_queue.dir/src/PriorityEventQueue.cpp.o CMakeFiles/event_queue.dir/src/MockEventQueue.cpp.o CMakeFiles/event_queue.dir/src/PriorityResolver.cpp.o CMakeFiles/event_queue.dir/src/TelegramClient.cpp.o CMakeFiles/event_queue.dir/src/MockTelegramClient.cpp.o
-/usr/bin/ranlib libevent_queue.a
