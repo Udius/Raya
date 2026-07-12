@@ -248,7 +248,6 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
                 stateId == td::td_api::authorizationStateClosed::ID) {
             setAuthState(AuthState::LoggedOut);
         } else if (stateId == td::td_api::authorizationStateWaitPhoneNumber::ID) {
-            // Правильное состояние – ожидание номера
             setAuthState(AuthState::WaitingForPhoneNumber);
             if (!connect_ready_) {
                 connect_ready_ = true;
@@ -257,16 +256,34 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
             }
         }
     }
+    else if (id == td::td_api::updateOption::ID) {
+        auto* updateOpt = static_cast<td::td_api::updateOption*>(update.get());
+        if (updateOpt->name_ == "my_id") {
+            if (updateOpt->value_->get_id() == td::td_api::optionValueInteger::ID) {
+                auto* intVal = static_cast<td::td_api::optionValueInteger*>(updateOpt->value_.get());
+                my_id_ = intVal->value_;
+                logger_->debug("my_id set to " + std::to_string(my_id_));
+            }
+        }
+    }
     else if (id == td::td_api::updateNewMessage::ID) {
         auto* updateMsg = static_cast<td::td_api::updateNewMessage*>(update.get());
         auto& message = updateMsg->message_;
-        
-        // Игнорируем исходящие сообщения (отправленные нами)
-        if (message->is_outgoing_) {
-            logger_->debug("Ignoring outgoing message");
+
+        // Проверяем отправителя, чтобы игнорировать свои сообщения
+        auto* sender = message->sender_id_.get();
+        bool isOwn = false;
+        if (sender->get_id() == td::td_api::messageSenderUser::ID) {
+            auto* userSender = static_cast<td::td_api::messageSenderUser*>(sender);
+            if (userSender->user_id_ == my_id_ && my_id_ != 0) {
+                isOwn = true;
+            }
+        }
+        if (isOwn) {
+            logger_->debug("Ignoring own message");
             return;
         }
-        
+
         if (message->content_->get_id() == td::td_api::messageText::ID) {
             auto* textContent = static_cast<td::td_api::messageText*>(message->content_.get());
             int64_t chatId = message->chat_id_;
@@ -283,7 +300,6 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
         auto* updateSend = static_cast<td::td_api::updateMessageSendSucceeded*>(update.get());
         std::lock_guard<std::mutex> lock(deliveryMutex_);
         if (deliveryCallback_) {
-            // updateSend->message_ — указатель на сообщение
             deliveryCallback_(updateSend->message_->id_, MessageStatus::Delivered);
         }
     }
@@ -291,9 +307,6 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
         auto* updateFail = static_cast<td::td_api::updateMessageSendFailed*>(update.get());
         std::lock_guard<std::mutex> lock(deliveryMutex_);
         if (deliveryCallback_) {
-            // Используем поле message_id (без подчёркивания) – оно есть в этой версии
-            // Если его нет, можно взять updateFail->message_->id_
-            // В новых версиях TDLib поле называется message_id (int64)
             deliveryCallback_(updateFail->message_->id_, MessageStatus::Failed);
         }
     }

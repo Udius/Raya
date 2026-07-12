@@ -57,7 +57,8 @@ private:
     bool connect_ready_ = false;
     std::mutex connect_mutex_;
     std::condition_variable connect_cv_;
-
+    int64_t my_id_ = 0;
+    
     std::shared_ptr<common::ILogger> logger_;
 
 private:
