@@ -35,3 +35,6 @@ cmake_install.cmake
 # Пользовательские конфиги
 *.user
 *.user.*
+
+# Конфиг!
+config.toml
