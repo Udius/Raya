@@ -73,6 +73,8 @@ AFuture<void> TelegramClient::logout() {
 // Инициализация TDLib
 // ------------------------------------------------------------------
 void TelegramClient::initTdLib(const TdConfig& config) {
+    td::ClientManager::execute(td::td_api::make_object<td::td_api::setLogVerbosityLevel>(1));
+    
     clientManager_ = std::make_unique<td::ClientManager>();
     clientId_ = clientManager_->create_client_id();
 

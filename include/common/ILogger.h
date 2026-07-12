@@ -3,8 +3,16 @@
 
 #include <string>
 #include <iostream>
+#include <map>
 
 namespace common {
+
+enum class LogLevel {
+    Debug,   // все сообщения
+    Info,    // info, warn, error
+    Warn,    // warn, error
+    Error    // только error
+};
 
 class ILogger {
 public:
@@ -16,7 +24,7 @@ public:
     virtual void debug(const std::string& msg) = 0;
 };
 
-/// Реализация-заглушка (no-op) для продакшена или тестов
+/// Реализация-заглушка (no-op)
 class NullLogger : public ILogger {
 public:
     void info(const std::string&) override {}
@@ -25,13 +33,39 @@ public:
     void debug(const std::string&) override {}
 };
 
-/// Простая реализация для вывода в консоль (опционально)
+/// Консольный логгер с фильтрацией по уровню
 class ConsoleLogger : public ILogger {
 public:
-    void info(const std::string& msg) override { std::cout << "[INFO] " << msg << std::endl; }
-    void warn(const std::string& msg) override { std::cout << "[WARN] " << msg << std::endl; }
-    void error(const std::string& msg) override { std::cout << "[ERROR] " << msg << std::endl; }
-    void debug(const std::string& msg) override { std::cout << "[DEBUG] " << msg << std::endl; }
+    explicit ConsoleLogger(LogLevel level = LogLevel::Info) : level_(level) {}
+
+    // Преобразование строки в LogLevel (удобно для конфига)
+    static LogLevel fromString(const std::string& levelStr) {
+        static const std::map<std::string, LogLevel> mapping = {
+            {"debug", LogLevel::Debug},
+            {"info",  LogLevel::Info},
+            {"warn",  LogLevel::Warn},
+            {"error", LogLevel::Error}
+        };
+        auto it = mapping.find(levelStr);
+        if (it != mapping.end()) return it->second;
+        return LogLevel::Info; // значение по умолчанию
+    }
+
+    void info(const std::string& msg) override {
+        if (level_ <= LogLevel::Info) std::cout << "[INFO] " << msg << std::endl;
+    }
+    void warn(const std::string& msg) override {
+        if (level_ <= LogLevel::Warn) std::cout << "[WARN] " << msg << std::endl;
+    }
+    void error(const std::string& msg) override {
+        if (level_ <= LogLevel::Error) std::cerr << "[ERROR] " << msg << std::endl;
+    }
+    void debug(const std::string& msg) override {
+        if (level_ <= LogLevel::Debug) std::cout << "[DEBUG] " << msg << std::endl;
+    }
+
+private:
+    LogLevel level_;
 };
 
 } // namespace common
