@@ -5,40 +5,39 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ------------------------------------------------------------------
-# 1. Подключение зависимостей через vcpkg
+# 1. Путь к локальной сборке TDLib (статическая линковка)
 # ------------------------------------------------------------------
+set(TDLIB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tdlib")
+set(TDLIB_INCLUDE_DIR "${TDLIB_ROOT}/include")
 
+set(TDLIB_STATIC_LIBS
+    -Wl,--start-group
+    ${TDLIB_ROOT}/lib/libtde2e.a
+    ${TDLIB_ROOT}/lib/libtdcore.a
+    ${TDLIB_ROOT}/lib/libtdclient.a
+    ${TDLIB_ROOT}/lib/libtdnet.a
+    ${TDLIB_ROOT}/lib/libtddb.a
+    ${TDLIB_ROOT}/lib/libtdsqlite.a
+    ${TDLIB_ROOT}/lib/libtdutils.a
+    ${TDLIB_ROOT}/lib/libtdactor.a
+    ${TDLIB_ROOT}/lib/libtdmtproto.a
+    ${TDLIB_ROOT}/lib/libtdapi.a
+    ${TDLIB_ROOT}/lib/libtdjson_static.a
+    -Wl,--end-group
+)
+
+add_definitions(-DTD_STATIC)
+
+# ------------------------------------------------------------------
+# 2. Поиск системных зависимостей
+# ------------------------------------------------------------------
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(toml11 REQUIRED)
-find_package(Td REQUIRED)
-
-if(Td_FOUND)
-    message(STATUS "Td found, libraries: Td::tdjson_static")
-else()
-    message(FATAL_ERROR "Td not found")
-endif()
 
 # ------------------------------------------------------------------
-# 2. Поиск include-директории TDLib (если не задана)
-# ------------------------------------------------------------------
-if(NOT Td_INCLUDE_DIRS)
-    # Пытаемся найти Client.h в стандартных местах
-    find_path(Td_INCLUDE_DIRS td/telegram/Client.h
-        PATHS 
-            ${CMAKE_PREFIX_PATH}/../include
-            ${CMAKE_PREFIX_PATH}/../../include
-            ~/vcpkg/vcpkg/installed/x64-linux/include
-            /usr/local/include
-            /usr/include
-        REQUIRED
-    )
-    message(STATUS "Found Td include dir: ${Td_INCLUDE_DIRS}")
-else()
-    message(STATUS "Td_INCLUDE_DIRS already set: ${Td_INCLUDE_DIRS}")
-endif()
-
-# ------------------------------------------------------------------
-# 3. Общая директория для заголовков
+# 3. Общая директория для заголовков проекта
 # ------------------------------------------------------------------
 include_directories(include)
 
@@ -46,7 +45,6 @@ include_directories(include)
 # 4. Библиотеки проекта
 # ------------------------------------------------------------------
 
-# 4.1. Очередь событий
 add_library(event_queue
     src/PriorityEventQueue.cpp
     src/MockEventQueue.cpp
@@ -54,16 +52,20 @@ add_library(event_queue
 )
 target_include_directories(event_queue PUBLIC include)
 
-# 4.2. Telegram-клиент
 add_library(telegram
     src/TelegramClient.cpp
     src/MockTelegramClient.cpp
 )
 target_include_directories(telegram PUBLIC include)
-target_include_directories(telegram PRIVATE ${Td_INCLUDE_DIRS})
-target_link_libraries(telegram Td::tdjson_static)
+target_include_directories(telegram PRIVATE ${TDLIB_INCLUDE_DIR})
+target_link_libraries(telegram
+    ${TDLIB_STATIC_LIBS}
+    ${OPENSSL_LIBRARIES}
+    ${ZLIB_LIBRARIES}
+    dl
+    pthread
+)
 
-# 4.3. Основной цикл агента
 add_library(core
     src/AgentMainLoop.cpp
     src/EchoMessageHandler.cpp
@@ -74,7 +76,6 @@ target_link_libraries(core
     telegram
 )
 
-# 4.4. Конфигурация
 add_library(config
     src/Config.cpp
 )
@@ -88,16 +89,19 @@ target_link_libraries(config
 # ------------------------------------------------------------------
 add_executable(ai_agent src/main.cpp)
 
+target_include_directories(ai_agent PRIVATE include src ${TDLIB_INCLUDE_DIR})
+
 target_link_libraries(ai_agent
     core
     event_queue
     telegram
     config
-    Td::tdjson_static
+    ${TDLIB_STATIC_LIBS}
+    ${OPENSSL_LIBRARIES}
+    ${ZLIB_LIBRARIES}
+    dl
     pthread
 )
-target_include_directories(ai_agent PRIVATE include)
-# ai_agent не использует TDLib напрямую, поэтому include не добавляем
 
 # ------------------------------------------------------------------
 # 6. Тесты
@@ -108,19 +112,22 @@ add_executable(event_tests
     tests/AgentMainLoopTests.cpp
 )
 
-target_include_directories(event_tests PRIVATE include src)
-target_include_directories(event_tests PRIVATE ${Td_INCLUDE_DIRS})  # на всякий случай
+target_include_directories(event_tests PRIVATE include src ${TDLIB_INCLUDE_DIR})
+
 target_link_libraries(event_tests
     event_queue
     telegram
     core
     config
-    Td::tdjson_static
+    ${TDLIB_STATIC_LIBS}
+    ${OPENSSL_LIBRARIES}
+    ${ZLIB_LIBRARIES}
+    dl
+    pthread
     GTest::gtest
     GTest::gtest_main
     GTest::gmock
     GTest::gmock_main
-    pthread
 )
 
 # ------------------------------------------------------------------
