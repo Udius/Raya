@@ -12,19 +12,16 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
-#include <unistd.h>   // close, pause, _exit, write
+#include <unistd.h>
 #include <cstring>
 
 std::atomic<bool> shutdownRequested{false};
 std::atomic<bool> connected{false};
 
-// Прямая запись в stderr без буферизации
-void safe_stderr(const char* msg) {
-    write(STDERR_FILENO, msg, strlen(msg));
-}
-
 void signalHandler(int) {
-    safe_stderr("*** SIGNAL HANDLER CALLED ***\n");
+    // Минимальный безопасный вывод для сигнала
+    const char* msg = "*** SIGNAL HANDLER CALLED ***\n";
+    write(STDERR_FILENO, msg, strlen(msg));
     shutdownRequested = true;
     close(STDIN_FILENO);
 }
@@ -36,45 +33,71 @@ void runConnect(std::shared_ptr<telegram::ITelegramClient> client,
     try {
         logger->info("Connecting to Telegram...");
         client->connect(tdConfig).wait();
-        logger->info("Connected.");
+        logger->info("Connected successfully.");
         connected = true;
     } catch (const std::exception& e) {
         logger->error("Connection failed: " + std::string(e.what()));
     }
 }
 
-// Поток авторизации (без изменений)
+// Поток авторизации
 void runAuthorization(std::shared_ptr<telegram::ITelegramClient> client,
                       std::shared_ptr<common::ILogger> logger,
                       std::atomic<bool>& shutdownRequested) {
     try {
-        if (client->getAuthState() == telegram::AuthState::LoggedOut && !shutdownRequested) {
-            std::cout << "Enter phone number (e.g. +79123456789): " << std::flush;
-            std::string phone;
-            std::cin >> phone;
-            if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
-            client->login(phone).wait();
+        while (!shutdownRequested && client->getAuthState() != telegram::AuthState::LoggedIn) {
+            auto state = client->getAuthState();
+            logger->debug("Authorization state: " + std::to_string(static_cast<int>(state)));
+
+            if (state == telegram::AuthState::LoggedOut || state == telegram::AuthState::WaitingForPhoneNumber) {
+                std::cout << "Enter phone number (e.g. +79123456789): " << std::flush;
+                std::string phone;
+                std::cin >> phone;
+                if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
+                logger->info("Sending phone number...");
+                auto future = client->login(phone);
+                auto status = future.wait_for(std::chrono::seconds(30));
+                if (status == std::future_status::timeout) {
+                    logger->error("Login timeout");
+                    return;
+                }
+                future.get();
+            } else if (state == telegram::AuthState::WaitingForCode) {
+                std::cout << "Enter auth code: " << std::flush;
+                std::string code;
+                std::cin >> code;
+                if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
+                logger->info("Sending authentication code...");
+                auto future = client->setAuthCode(code);
+                auto status = future.wait_for(std::chrono::seconds(30));
+                if (status == std::future_status::timeout) {
+                    logger->error("Authentication code timeout");
+                    return;
+                }
+                future.get();
+            } else if (state == telegram::AuthState::WaitingForPassword) {
+                std::cout << "Enter 2FA password: " << std::flush;
+                std::string password;
+                std::cin >> password;
+                if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
+                logger->info("Sending 2FA password...");
+                auto future = client->setPassword(password);
+                auto status = future.wait_for(std::chrono::seconds(30));
+                if (status == std::future_status::timeout) {
+                    logger->error("2FA password timeout");
+                    return;
+                }
+                future.get();
+            } else if (state == telegram::AuthState::Error) {
+                logger->error("Authentication error, please restart the application.");
+                return;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
-        if (client->getAuthState() == telegram::AuthState::WaitingForCode && !shutdownRequested) {
-            std::cout << "Enter auth code: " << std::flush;
-            std::string code;
-            std::cin >> code;
-            if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
-            client->setAuthCode(code).wait();
+        if (!shutdownRequested) {
+            logger->info("Logged in successfully.");
         }
-        if (client->getAuthState() == telegram::AuthState::WaitingForPassword && !shutdownRequested) {
-            std::cout << "Enter 2FA password: " << std::flush;
-            std::string password;
-            std::cin >> password;
-            if (std::cin.eof() || std::cin.fail() || shutdownRequested) return;
-            client->setPassword(password).wait();
-        }
-        while (client->getAuthState() != telegram::AuthState::LoggedIn && !shutdownRequested) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            logger->debug("Waiting for login...");
-        }
-        if (shutdownRequested) return;
-        logger->info("Logged in successfully.");
     } catch (const std::exception& e) {
         if (!shutdownRequested) {
             logger->error("Authorization error: " + std::string(e.what()));
@@ -86,90 +109,79 @@ int main() {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    safe_stderr("MAIN: start\n");
-
     try {
-        safe_stderr("MAIN: loading config...\n");
-        auto cfg = config::load();
-        safe_stderr("MAIN: config loaded\n");
-
         auto logger = std::make_shared<common::ConsoleLogger>(
+            common::ConsoleLogger::fromString("info") // можно заменить на cfg.logging.level после загрузки
+        );
+
+        logger->info("Loading configuration...");
+        auto cfg = config::load();
+        // Обновляем уровень логирования из конфига
+        logger = std::make_shared<common::ConsoleLogger>(
             common::ConsoleLogger::fromString(cfg.logging.level)
         );
-        safe_stderr("MAIN: logger created\n");
 
+        logger->info("Initializing Telegram client...");
         auto client = std::make_shared<telegram::TelegramClient>();
-        safe_stderr("MAIN: client created\n");
+        client->setLogger(logger);
 
         telegram::TdConfig tdConfig;
         tdConfig.api_id = cfg.telegram.api_id;
         tdConfig.api_hash = cfg.telegram.api_hash;
         tdConfig.database_directory = cfg.telegram.database_directory;
 
-        // Запускаем подключение в фоновом потоке
-        safe_stderr("MAIN: starting connectThread...\n");
+        logger->info("Starting connection thread...");
         std::thread connectThread(runConnect, client, tdConfig, logger);
 
-        // Ждём либо успешного подключения, либо сигнала завершения
-        while (!connected && !shutdownRequested) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-
         if (shutdownRequested) {
-            safe_stderr("MAIN: shutdown requested before connect finished.\n");
             if (connectThread.joinable()) {
                 connectThread.detach();
             }
-            logger->info("Application finished (early shutdown).");
+            logger->info("Application terminated early.");
             return 0;
         }
 
-        safe_stderr("MAIN: client connected\n");
         if (connectThread.joinable()) {
             connectThread.join();
         }
 
-        safe_stderr("MAIN: starting authThread...\n");
+        if (!connected) {
+            logger->error("Failed to connect to Telegram. Exiting.");
+            return 1;
+        }
+
+        logger->info("Starting authorization...");
         std::thread authThread(runAuthorization, client, logger, std::ref(shutdownRequested));
-        safe_stderr("MAIN: authThread started\n");
 
-        safe_stderr("MAIN: creating PriorityEventQueue...\n");
+        logger->info("Initializing event queue...");
         auto queue = std::make_shared<event::PriorityEventQueue>(logger);
-        safe_stderr("MAIN: PriorityEventQueue created\n");
 
-        safe_stderr("MAIN: creating PriorityResolver...\n");
+        logger->info("Initializing priority resolver...");
         auto resolver = std::make_shared<event::PriorityResolver>();
-        safe_stderr("MAIN: PriorityResolver created\n");
-
         if (cfg.auth.papik_chat_id != 0) {
             resolver->setPapikChatId(cfg.auth.papik_chat_id);
             logger->info("Papik chat ID set to " + std::to_string(cfg.auth.papik_chat_id));
         }
 
-        safe_stderr("MAIN: creating EchoMessageHandler...\n");
+        logger->info("Creating message handler...");
         auto handler = std::make_shared<core::EchoMessageHandler>(logger);
-        safe_stderr("MAIN: EchoMessageHandler created\n");
 
-        safe_stderr("MAIN: creating AgentMainLoop...\n");
+        logger->info("Starting main agent loop...");
         core::AgentMainLoop loop(client, queue, handler, resolver, logger);
-        safe_stderr("MAIN: AgentMainLoop created\n");
-
-        logger->info("Starting AgentMainLoop...");
-        safe_stderr("MAIN: starting loopThread...\n");
         std::thread loopThread([&loop]() { loop.run(); });
-        safe_stderr("MAIN: loopThread started\n");
 
-        safe_stderr("MAIN: entering pause loop, waiting for Ctrl+C...\n");
+        logger->info("Agent is running. Press Ctrl+C to stop.");
         while (!shutdownRequested) {
-            pause();  // приостановка до получения сигнала
+            pause();  // ждём сигнал
         }
 
-        safe_stderr("MAIN: shutdown requested, stopping...\n");
+        logger->info("Shutdown requested. Stopping...");
 
         // Принудительное завершение через 3 секунды
         std::thread force_exit_timer([&]() {
             std::this_thread::sleep_for(std::chrono::seconds(3));
-            safe_stderr("!!! FORCED EXIT after 3 seconds !!!\n");
+            const char* msg = "!!! FORCED EXIT !!!\n";
+            write(STDERR_FILENO, msg, strlen(msg));
             _exit(0);
         });
         force_exit_timer.detach();
@@ -185,7 +197,7 @@ int main() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             if (loopThread.joinable()) {
-                safe_stderr("MAIN: loopThread did not stop, detaching\n");
+                logger->warn("Loop thread did not stop, detaching.");
                 loopThread.detach();
             } else {
                 loopThread.join();
@@ -199,15 +211,14 @@ int main() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             if (authThread.joinable()) {
-                safe_stderr("MAIN: authThread did not stop, detaching\n");
+                logger->warn("Auth thread did not stop, detaching.");
                 authThread.detach();
             } else {
                 authThread.join();
             }
         }
 
-        logger->info("Application finished.");
-        safe_stderr("MAIN: returning 0\n");
+        logger->info("Application finished successfully.");
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;

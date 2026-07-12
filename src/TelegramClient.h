@@ -2,6 +2,7 @@
 #pragma once
 
 #include "telegram/ITelegramClient.h"
+#include "common/ILogger.h"
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
@@ -47,6 +48,17 @@ public:
 
     AuthState getAuthState() const override;
     void setRetryPolicy(const RetryPolicy& policy) override;
+
+    void setLogger(std::shared_ptr<common::ILogger> logger);
+
+private:
+    std::promise<void> connect_promise_;
+    std::future<void> connect_future_;
+    bool connect_ready_ = false;
+    std::mutex connect_mutex_;
+    std::condition_variable connect_cv_;
+
+    std::shared_ptr<common::ILogger> logger_;
 
 private:
     using RequestId = std::uint64_t;

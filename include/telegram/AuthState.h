@@ -5,6 +5,7 @@ namespace telegram {
 
 enum class AuthState {
     LoggedOut,
+    WaitingForPhoneNumber,
     WaitingForCode,
     WaitingForPassword,
     LoggedIn,

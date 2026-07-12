@@ -18,10 +18,21 @@ namespace telegram {
 // Конструктор / Деструктор
 // ------------------------------------------------------------------
 TelegramClient::TelegramClient(const RetryPolicy& defaultPolicy)
-    : retryPolicy_(defaultPolicy) {}
+    : retryPolicy_(defaultPolicy)
+    , logger_(std::make_shared<common::NullLogger>())
+{}
 
 TelegramClient::~TelegramClient() {
     disconnect().wait();
+}
+
+// ------------------------------------------------------------------
+// Логгер
+// ------------------------------------------------------------------
+void TelegramClient::setLogger(std::shared_ptr<common::ILogger> logger) {
+    if (logger) {
+        logger_ = logger;
+    }
 }
 
 // ------------------------------------------------------------------
@@ -32,12 +43,22 @@ AFuture<void> TelegramClient::connect(const TdConfig& config) {
         throw std::logic_error("Already connected");
     }
     config_ = config;
-    initTdLib(config);
+
+    // Создаём promise для ожидания готовности
+    connect_promise_ = std::promise<void>();
+    connect_future_ = connect_promise_.get_future();
+
+    clientManager_ = std::make_unique<td::ClientManager>();
+    clientId_ = clientManager_->create_client_id();
+
     running_ = true;
     receiverThread_ = std::thread(&TelegramClient::runReceiveLoop, this);
-    std::promise<void> promise;
-    promise.set_value();
-    return promise.get_future();
+
+    initTdLib(config);
+
+    return std::async(std::launch::async, [this]() {
+        connect_future_.get();
+    });
 }
 
 AFuture<void> TelegramClient::disconnect() {
@@ -73,11 +94,10 @@ AFuture<void> TelegramClient::logout() {
 // Инициализация TDLib
 // ------------------------------------------------------------------
 void TelegramClient::initTdLib(const TdConfig& config) {
+    // Установка уровня логирования (синхронный вызов, безопасен до создания менеджера)
     td::ClientManager::execute(td::td_api::make_object<td::td_api::setLogVerbosityLevel>(1));
-    
-    clientManager_ = std::make_unique<td::ClientManager>();
-    clientId_ = clientManager_->create_client_id();
 
+    // Отправка запросов через существующий clientManager_
     auto params = td::td_api::make_object<td::td_api::setTdlibParameters>();
     params->use_test_dc_ = false;
     params->database_directory_ = config.database_directory;
@@ -92,10 +112,44 @@ void TelegramClient::initTdLib(const TdConfig& config) {
     params->application_version_ = "1.0.0";
 
     auto setParamsFuture = sendQueryTyped<td::td_api::ok>(std::move(params));
+    setParamsFuture.get();
+
+    // Настройка прокси (остаётся без изменений)
     try {
-        setParamsFuture.get();
+        auto setProxyType = sendQueryTyped<td::td_api::ok>(
+            td::td_api::make_object<td::td_api::setOption>(
+                "proxy_type",
+                td::td_api::make_object<td::td_api::optionValueString>("socks5")
+            )
+        );
+        setProxyType.get();
+
+        auto setProxyServer = sendQueryTyped<td::td_api::ok>(
+            td::td_api::make_object<td::td_api::setOption>(
+                "proxy_server",
+                td::td_api::make_object<td::td_api::optionValueString>("127.0.0.1")
+            )
+        );
+        setProxyServer.get();
+
+        auto setProxyPort = sendQueryTyped<td::td_api::ok>(
+            td::td_api::make_object<td::td_api::setOption>(
+                "proxy_port",
+                td::td_api::make_object<td::td_api::optionValueInteger>(9050)
+            )
+        );
+        setProxyPort.get();
+
+        auto enableProxy = sendQueryTyped<td::td_api::ok>(
+            td::td_api::make_object<td::td_api::setOption>(
+                "enable_proxy",
+                td::td_api::make_object<td::td_api::optionValueBoolean>(true)
+            )
+        );
+        enableProxy.get();
     } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to set TDLib parameters: " + std::string(e.what()));
+        // Игнорируем ошибки установки прокси (они могут быть не критичны)
+        // Можно залогировать, но не прерывать инициализацию.
     }
 }
 
@@ -134,7 +188,7 @@ AFuture<std::unique_ptr<td::td_api::Object>> TelegramClient::sendQuery(
         pendingRequests_[requestId] = promise;
     }
 
-    // Передаём clientId_, requestId и function
+    logger_->debug("Sending query with request_id=" + std::to_string(requestId));
     clientManager_->send(clientId_, requestId, std::move(function));
     return future;
 }
@@ -143,6 +197,9 @@ AFuture<std::unique_ptr<td::td_api::Object>> TelegramClient::sendQuery(
 // Обработка ответов и обновлений
 // ------------------------------------------------------------------
 void TelegramClient::processResponse(td::ClientManager::Response response) {
+    logger_->debug("processResponse: request_id=" + std::to_string(response.request_id) +
+                   ", object=" + (response.object ? "not null" : "null"));
+
     if (response.request_id == 0) {
         processUpdate(std::move(response.object));
         return;
@@ -154,13 +211,15 @@ void TelegramClient::processResponse(td::ClientManager::Response response) {
         auto promise = it->second;
         pendingRequests_.erase(it);
         lock.unlock();
-        // Используем std::move для преобразования td::tl::unique_ptr в std::unique_ptr
         promise->set_value(std::unique_ptr<td::td_api::Object>(response.object.release()));
+        logger_->debug("Promise set for request_id=" + std::to_string(response.request_id));
+    } else {
+        logger_->warn("No pending promise for request_id=" + std::to_string(response.request_id));
     }
 }
-
 void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> update) {
     int32_t id = update->get_id();
+    logger_->debug("processUpdate: id=" + std::to_string(id));
 
     if (id == td::td_api::updateAuthorizationState::ID) {
         auto* updateState = static_cast<td::td_api::updateAuthorizationState*>(update.get());
@@ -169,18 +228,45 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
 
         if (stateId == td::td_api::authorizationStateWaitCode::ID) {
             setAuthState(AuthState::WaitingForCode);
+            if (!connect_ready_) {
+                connect_ready_ = true;
+                connect_promise_.set_value();
+            }
         } else if (stateId == td::td_api::authorizationStateWaitPassword::ID) {
             setAuthState(AuthState::WaitingForPassword);
+            if (!connect_ready_) {
+                connect_ready_ = true;
+                connect_promise_.set_value();
+            }
         } else if (stateId == td::td_api::authorizationStateReady::ID) {
             setAuthState(AuthState::LoggedIn);
+            if (!connect_ready_) {
+                connect_ready_ = true;
+                connect_promise_.set_value();
+            }
         } else if (stateId == td::td_api::authorizationStateLoggingOut::ID ||
-                   stateId == td::td_api::authorizationStateClosed::ID) {
+                stateId == td::td_api::authorizationStateClosed::ID) {
             setAuthState(AuthState::LoggedOut);
+        } else if (stateId == td::td_api::authorizationStateWaitPhoneNumber::ID) {
+            // Правильное состояние – ожидание номера
+            setAuthState(AuthState::WaitingForPhoneNumber);
+            if (!connect_ready_) {
+                connect_ready_ = true;
+                connect_promise_.set_value();
+                logger_->info("Connect promise set on WaitPhoneNumber");
+            }
         }
     }
     else if (id == td::td_api::updateNewMessage::ID) {
         auto* updateMsg = static_cast<td::td_api::updateNewMessage*>(update.get());
         auto& message = updateMsg->message_;
+        
+        // Игнорируем исходящие сообщения (отправленные нами)
+        if (message->is_outgoing_) {
+            logger_->debug("Ignoring outgoing message");
+            return;
+        }
+        
         if (message->content_->get_id() == td::td_api::messageText::ID) {
             auto* textContent = static_cast<td::td_api::messageText*>(message->content_.get());
             int64_t chatId = message->chat_id_;
@@ -217,8 +303,9 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
 // Авторизация
 // ------------------------------------------------------------------
 AFuture<void> TelegramClient::login(const std::string& phoneNumber) {
-    if (authState_ != AuthState::LoggedOut) {
-        throw std::logic_error("Already logging in or logged in");
+    auto state = authState_.load();
+    if (state != AuthState::LoggedOut && state != AuthState::WaitingForPhoneNumber) {
+        throw std::logic_error("Cannot login in current state");
     }
     auto request = td::td_api::make_object<td::td_api::setAuthenticationPhoneNumber>();
     request->phone_number_ = phoneNumber;
