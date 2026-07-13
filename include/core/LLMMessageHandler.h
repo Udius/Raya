@@ -19,16 +19,20 @@ public:
     std::string handle(const event::Event& event) override;
 
 private:
-    // Подсчёт приблизительного числа токенов (длина_строки / 3)
     int countTokens(const std::string& text) const;
     int countHistoryTokens() const;
     void trimHistoryByTokens();
+
+    // Сохранение/загрузка истории
+    void saveHistory() const;
+    void loadHistory();
 
     std::shared_ptr<IOpenAIChat> openAI_;
     std::shared_ptr<common::ILogger> logger_;
     std::string systemPrompt_;
     std::vector<IOpenAIChat::Message> history_;
     int maxHistoryTokens_;
+    std::string historyFilePath_;   // "data/history.json"
 };
 
 } // namespace core
