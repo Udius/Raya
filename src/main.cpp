@@ -21,12 +21,16 @@
 #include <sstream>
 
 std::atomic<bool> shutdownRequested{false};
+std::atomic<bool> signalShutdown{false};
 std::atomic<bool> connected{false};
 
 void signalHandler(int) {
-    // Минимальный безопасный вывод для сигнала
     const char* msg = "*** SIGNAL HANDLER CALLED ***\n";
     write(STDERR_FILENO, msg, strlen(msg));
+    if (shutdownRequested.load()) {
+        _exit(0);
+    }
+    signalShutdown = true;
     shutdownRequested = true;
     close(STDIN_FILENO);
 }
@@ -110,7 +114,40 @@ void runAuthorization(std::shared_ptr<telegram::ITelegramClient> client,
     }
 }
 
+// Поток для чтения команд из консоли
+void consoleCommandsLoop(std::atomic<bool>& shutdownRequested) {
+    std::string line;
+    while (!shutdownRequested.load() && std::getline(std::cin, line)) {
+        // Убираем пробелы и управляющие символы в начале/конце
+        size_t start = line.find_first_not_of(" \t\n\r");
+        if (start == std::string::npos) continue; // пустая строка
+        size_t end = line.find_last_not_of(" \t\n\r");
+        line = line.substr(start, end - start + 1);
+
+        // Эхо-вывод введённой команды
+        std::cout << "> " << std::flush;
+
+        if (line == "close" || line == "exit") {
+            std::cout << "Graceful shutdown initiated...\n" << std::flush;
+            shutdownRequested = true;
+            close(STDIN_FILENO);
+            break;
+        } else if (line == "help" || line == "?") {
+            std::cout << "Available commands:\n"
+                      << "  close / exit  - graceful shutdown\n"
+                      << "  help / ?      - show this help\n" << std::flush;
+        } else {
+            std::cout << "Unknown command. Type 'help' for list.\n" << std::flush;
+        }
+    }
+}
+
 int main() {
+    // Отключаем буферизацию вывода для мгновенного отображения
+    std::ios::sync_with_stdio(false);
+    std::cout << std::unitbuf;  // автоматический flush после каждого вывода
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
@@ -219,21 +256,27 @@ int main() {
         );
         std::thread loopThread([&loop]() { loop.run(); });
 
+        // Запускаем поток консольных команд
+        std::thread cmdThread(consoleCommandsLoop, std::ref(shutdownRequested));
+        std::cout << "Type 'help' for available commands.\n" << std::flush;
+
         logger->info("Agent is running. Press Ctrl+C to stop.");
         while (!shutdownRequested) {
-            pause();  // ждём сигнал
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        logger->info("Shutdown requested. Stopping...");
+                logger->info("Shutdown requested. Stopping...");
 
-        // Принудительное завершение через 3 секунды
-        std::thread force_exit_timer([&]() {
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-            const char* msg = "!!! FORCED EXIT !!!\n";
-            write(STDERR_FILENO, msg, strlen(msg));
-            _exit(0);
-        });
-        force_exit_timer.detach();
+        // Принудительное завершение через 3 секунды ТОЛЬКО при сигнале
+        if (signalShutdown) {
+            std::thread force_exit_timer([&]() {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                const char* msg = "!!! FORCED EXIT !!!\n";
+                write(STDERR_FILENO, msg, strlen(msg));
+                _exit(0);
+            });
+            force_exit_timer.detach();
+        }
 
         logger->info("Disconnecting Telegram client...");
         client->disconnect();
@@ -242,11 +285,15 @@ int main() {
         if (loopThread.joinable()) {
             auto start = std::chrono::steady_clock::now();
             while (loopThread.joinable() &&
-                   std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   std::chrono::steady_clock::now() - start < std::chrono::seconds(2) &&
+                   !signalShutdown.load()) {
+                std::this_thread::sleep_for(std::chrono::seconds(30));
             }
-            if (loopThread.joinable()) {
-                logger->warn("Loop thread did not stop, detaching.");
+            if (signalShutdown.load()) {
+                logger->warn("Signal received, aborting thread wait.");
+                loopThread.detach();
+            } else if (loopThread.joinable()) {
+                logger->warn("Loop thread did not stop after 30 sec, detaching.");
                 loopThread.detach();
             } else {
                 loopThread.join();
@@ -256,14 +303,36 @@ int main() {
         if (authThread.joinable()) {
             auto start = std::chrono::steady_clock::now();
             while (authThread.joinable() &&
-                   std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                   std::chrono::steady_clock::now() - start < std::chrono::seconds(1) &&
+                   !signalShutdown.load()) {
+                std::this_thread::sleep_for(std::chrono::seconds(30));
             }
-            if (authThread.joinable()) {
-                logger->warn("Auth thread did not stop, detaching.");
+            if (signalShutdown.load()) {
+                logger->warn("Signal received, aborting thread wait.");
+                loopThread.detach();
+            } else if (authThread.joinable()) {
+                logger->warn("Auth thread did not stop after 30 sec, detaching.");
                 authThread.detach();
             } else {
                 authThread.join();
+            }
+        }
+
+        if (cmdThread.joinable()) {
+            auto start = std::chrono::steady_clock::now();
+            while (cmdThread.joinable() &&
+                   std::chrono::steady_clock::now() - start < std::chrono::seconds(1) &&
+                   !signalShutdown.load()) {
+                std::this_thread::sleep_for(std::chrono::seconds(30));
+            }
+            if (signalShutdown.load()) {
+                logger->warn("Signal received, aborting thread wait.");
+                loopThread.detach();
+            } else if (cmdThread.joinable()) {
+                logger->warn("Command thread did not stop after 30 sec, detaching.");
+                cmdThread.detach();
+            } else {
+                cmdThread.join();
             }
         }
 
