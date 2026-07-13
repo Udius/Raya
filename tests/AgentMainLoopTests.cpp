@@ -42,7 +42,7 @@ TEST(AgentMainLoopTest, StartStop) {
     auto resolver = std::make_shared<PriorityResolver>();   // добавлено
     auto logger = std::make_shared<TestLogger>();
 
-    AgentMainLoop loop(client, queue, handler, resolver, logger);   // 5 аргументов
+    AgentMainLoop loop(client, queue, handler, resolver, 0, "all", logger);   // 5 аргументов
 
     std::thread loopThread([&loop]() { loop.run(); });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -68,7 +68,7 @@ TEST(AgentMainLoopTest, ProcessIncomingMessage) {
     EXPECT_CALL(*handler, handle(_))
         .WillOnce(Return("Hello back"));
 
-    AgentMainLoop loop(client, queue, handler, resolver, logger);
+    AgentMainLoop loop(client, queue, handler, resolver, 0, "all", logger);
     std::thread loopThread([&loop]() { loop.run(); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -95,7 +95,7 @@ TEST(AgentMainLoopTest, ShutdownOnStop) {
     auto resolver = std::make_shared<PriorityResolver>();
     auto logger = std::make_shared<TestLogger>();
 
-    AgentMainLoop loop(client, queue, handler, resolver, logger);
+    AgentMainLoop loop(client, queue, handler, resolver, 0, "all", logger);
     std::thread loopThread([&loop]() { loop.run(); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -117,7 +117,7 @@ TEST(AgentMainLoopTest, HandlerErrorDoesNotCrash) {
     EXPECT_CALL(*handler, handle(_))
         .WillOnce(Throw(std::runtime_error("Handler crash")));
 
-    AgentMainLoop loop(client, queue, handler, resolver, logger);
+    AgentMainLoop loop(client, queue, handler, resolver, 0, "all", logger);
     std::thread loopThread([&loop]() { loop.run(); });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));

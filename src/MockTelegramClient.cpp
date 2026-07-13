@@ -206,4 +206,8 @@ const std::vector<std::pair<int64_t, std::string>>& MockTelegramClient::getSentM
     return sentMessages_;
 }
 
+bool MockTelegramClient::isChatPinned(int64_t chatId) const {
+    return false; // заглушка для тестов
+}
+
 } // namespace telegram

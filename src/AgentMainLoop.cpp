@@ -22,13 +22,16 @@ AgentMainLoop::AgentMainLoop(
     std::shared_ptr<event::IEventQueue> queue,
     std::shared_ptr<IMessageHandler> handler,
     std::shared_ptr<event::PriorityResolver> resolver,
+    int64_t papikChatId,
+    const std::string& accessMode,
     std::shared_ptr<common::ILogger> logger)
     : client_(std::move(client))
     , queue_(std::move(queue))
     , handler_(std::move(handler))
     , resolver_(std::move(resolver))
-    , logger_(logger ? logger : std::make_shared<common::NullLogger>()) {
-}
+    , papikChatId_(papikChatId)
+    , accessMode_(accessMode)
+    , logger_(logger ? logger : std::make_shared<common::NullLogger>()) {}
 
 // ------------------------------------------------------------------
 // Деструктор (опционально, но для полноты)
@@ -75,6 +78,12 @@ void AgentMainLoop::stop() {
 // ------------------------------------------------------------------
 void AgentMainLoop::setupTelegramListener() {
     client_->addMessageListener([this](int64_t chatId, int64_t messageId, const std::string& text) {
+        // Фильтрация по доступу
+        if (!isChatAllowed(chatId)) {
+            logger_->warn("Message from chat " + std::to_string(chatId) + 
+                          " ignored (access mode: " + accessMode_ + ")");
+            return;
+        }
         event::TelegramMessage msg{chatId, messageId, text};
         auto priority = resolver_ ? resolver_->resolve(chatId) : event::EventPriority::Normal;
         event::Event ev(priority, "telegram", std::move(msg));
@@ -133,6 +142,17 @@ void AgentMainLoop::handleEvent(const event::Event& ev) {
     } catch (const std::exception& e) {
         logger_->error("Send failed: " + std::string(e.what()));
     }
+}
+
+bool AgentMainLoop::isChatAllowed(int64_t chatId) const {
+    if (accessMode_ == "papik_only") {
+        return chatId == papikChatId_;
+    }
+    if (accessMode_ == "pinned_only") {
+        return client_->isChatPinned(chatId);
+    }
+    // "all" или неизвестный режим
+    return true;
 }
 
 } // namespace core

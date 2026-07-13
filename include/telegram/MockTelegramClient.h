@@ -76,6 +76,8 @@ public:
     /// Очистить список отправленных сообщений
     void clearSentMessages();
 
+    bool isChatPinned(int64_t chatId) const override;
+
 private:
     struct ListenerEntry {
         std::uint64_t id;

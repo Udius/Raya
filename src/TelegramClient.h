@@ -130,6 +130,12 @@ private:
     DeliveryCallback deliveryCallback_;
     std::mutex authCallbackMutex_;
     AuthStateCallback authStateCallback_;
+
+    std::unordered_set<int64_t> pinnedChats_;
+    mutable std::mutex pinnedMutex_;
+
+public:
+    bool isChatPinned(int64_t chatId) const;
 };
 
 } // namespace telegram

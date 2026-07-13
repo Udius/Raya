@@ -57,6 +57,9 @@ public:
 
     // ----- Настройка политики повторных попыток -----
     virtual void setRetryPolicy(const RetryPolicy& policy) = 0;
+
+    // ----- Дополнительно: проверка закреплённого чата (для фильтрации) -----
+    virtual bool isChatPinned(int64_t chatId) const { return false; }
 };
 
 } // namespace telegram

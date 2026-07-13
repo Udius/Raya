@@ -6,6 +6,8 @@
 #include "common/ILogger.h"
 #include "event/PriorityResolver.h"
 #include "TelegramClient.h"
+#include "OpenAIChatImpl.h"
+#include "core/LLMMessageHandler.h"
 
 #include <csignal>
 #include <atomic>
@@ -164,10 +166,36 @@ int main() {
         }
 
         logger->info("Creating message handler...");
-        auto handler = std::make_shared<core::EchoMessageHandler>(logger);
+        // auto handler = std::make_shared<core::EchoMessageHandler>(logger);
+        // Загружаем настройки LLM
+        auto llmEndpoint = cfg.llm.endpoint;
+        auto llmApiKey = cfg.llm.api_key;
+        auto llmModel = cfg.llm.model;
+
+        // Создаём OpenAIChatImpl с этими параметрами
+        auto openAI = std::make_shared<OpenAIChatImpl>(
+            IOpenAIChat::Endpoint{cfg.llm.endpoint, cfg.llm.api_key},
+            cfg.llm.model
+        );
+
+        // Системный промпт (позже вынести в файл)
+        const std::string systemPrompt = 
+            "Ты — Рая, виртуальный ассистент с живым и дружелюбным характером. "
+            "Отвечай на вопросы кратко, по делу, но с теплотой. Ты помогаешь пользователю, "
+            "общаешься на русском языке, если пользователь пишет на русском, иначе на языке пользователя.";
+
+        auto handler = std::make_shared<core::LLMMessageHandler>(openAI, logger, systemPrompt);
 
         logger->info("Starting main agent loop...");
-        core::AgentMainLoop loop(client, queue, handler, resolver, logger);
+        core::AgentMainLoop loop(
+            client, 
+            queue, 
+            handler, 
+            resolver, 
+            cfg.auth.papik_chat_id, 
+            cfg.auth.chat_access_mode, 
+            logger
+        );
         std::thread loopThread([&loop]() { loop.run(); });
 
         logger->info("Agent is running. Press Ctrl+C to stop.");

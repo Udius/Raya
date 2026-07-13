@@ -13,16 +13,24 @@ struct TelegramConfig {
 
 struct AuthConfig {
     int64_t papik_chat_id;
+    std::string chat_access_mode;   // "papik_only", "pinned_only", "all"
 };
 
 struct LoggingConfig {
     std::string level;
 };
 
+struct LlmConfig {
+    std::string endpoint;
+    std::string api_key;
+    std::string model;
+};
+
 struct Config {
     TelegramConfig telegram;
     AuthConfig auth;
     LoggingConfig logging;
+    LlmConfig llm;
 };
 
 /// Загружает конфигурацию из файла config.toml.

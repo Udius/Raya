@@ -31,6 +31,8 @@ public:
         std::shared_ptr<event::IEventQueue> queue,
         std::shared_ptr<IMessageHandler> handler,
         std::shared_ptr<event::PriorityResolver> resolver,
+        int64_t papikChatId,
+        const std::string& accessMode,
         std::shared_ptr<common::ILogger> logger = std::make_shared<common::NullLogger>()
     );
     
@@ -56,6 +58,9 @@ private:
     std::atomic<bool> shouldStop_{false};
     std::thread workerThread_;
 
+    int64_t papikChatId_;
+    std::string accessMode_;
+
     /// Настройка подписки на входящие сообщения Telegram.
     void setupTelegramListener();
 
@@ -66,6 +71,8 @@ private:
     void sendReply(int64_t chatId, const std::string& text);
     
     void handleEvent(const event::Event& ev);
+
+    bool isChatAllowed(int64_t chatId) const;
 };
 
 } // namespace core

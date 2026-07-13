@@ -35,6 +35,13 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(toml11 REQUIRED)
+find_package(CURL REQUIRED)
+
+find_path(NLOHMANN_JSON_INCLUDE_DIR NAMES json.hpp PATH_SUFFIXES nlohmann)
+if(NOT NLOHMANN_JSON_INCLUDE_DIR)
+    message(FATAL_ERROR "nlohmann/json.hpp not found. Please install nlohmann-json3-dev")
+endif()
+include_directories(${NLOHMANN_JSON_INCLUDE_DIR})
 
 # ------------------------------------------------------------------
 # 3. Общая директория для заголовков проекта
@@ -69,11 +76,15 @@ target_link_libraries(telegram
 add_library(core
     src/AgentMainLoop.cpp
     src/EchoMessageHandler.cpp
+    src/LLMMessageHandler.cpp
+    src/OpenAIChatImpl.cpp
 )
 target_include_directories(core PUBLIC include)
 target_link_libraries(core
     event_queue
     telegram
+    config
+    ${CURL_LIBRARIES}
 )
 
 add_library(config
@@ -99,9 +110,13 @@ target_link_libraries(ai_agent
     ${TDLIB_STATIC_LIBS}
     ${OPENSSL_LIBRARIES}
     ${ZLIB_LIBRARIES}
+    ${CURL_LIBRARIES}
     dl
     pthread
 )
+
+target_include_directories(core PRIVATE ${CURL_INCLUDE_DIRS})
+target_include_directories(ai_agent PRIVATE ${CURL_INCLUDE_DIRS})
 
 # ------------------------------------------------------------------
 # 6. Тесты

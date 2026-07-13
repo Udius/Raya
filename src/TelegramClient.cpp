@@ -114,43 +114,43 @@ void TelegramClient::initTdLib(const TdConfig& config) {
     auto setParamsFuture = sendQueryTyped<td::td_api::ok>(std::move(params));
     setParamsFuture.get();
 
-    // Настройка прокси (остаётся без изменений)
-    try {
-        auto setProxyType = sendQueryTyped<td::td_api::ok>(
-            td::td_api::make_object<td::td_api::setOption>(
-                "proxy_type",
-                td::td_api::make_object<td::td_api::optionValueString>("socks5")
-            )
-        );
-        setProxyType.get();
+    // // Настройка прокси (остаётся без изменений)
+    // try {
+    //     auto setProxyType = sendQueryTyped<td::td_api::ok>(
+    //         td::td_api::make_object<td::td_api::setOption>(
+    //             "proxy_type",
+    //             td::td_api::make_object<td::td_api::optionValueString>("socks5")
+    //         )
+    //     );
+    //     setProxyType.get();
 
-        auto setProxyServer = sendQueryTyped<td::td_api::ok>(
-            td::td_api::make_object<td::td_api::setOption>(
-                "proxy_server",
-                td::td_api::make_object<td::td_api::optionValueString>("127.0.0.1")
-            )
-        );
-        setProxyServer.get();
+    //     auto setProxyServer = sendQueryTyped<td::td_api::ok>(
+    //         td::td_api::make_object<td::td_api::setOption>(
+    //             "proxy_server",
+    //             td::td_api::make_object<td::td_api::optionValueString>("127.0.0.1")
+    //         )
+    //     );
+    //     setProxyServer.get();
 
-        auto setProxyPort = sendQueryTyped<td::td_api::ok>(
-            td::td_api::make_object<td::td_api::setOption>(
-                "proxy_port",
-                td::td_api::make_object<td::td_api::optionValueInteger>(9050)
-            )
-        );
-        setProxyPort.get();
+    //     auto setProxyPort = sendQueryTyped<td::td_api::ok>(
+    //         td::td_api::make_object<td::td_api::setOption>(
+    //             "proxy_port",
+    //             td::td_api::make_object<td::td_api::optionValueInteger>(9050)
+    //         )
+    //     );
+    //     setProxyPort.get();
 
-        auto enableProxy = sendQueryTyped<td::td_api::ok>(
-            td::td_api::make_object<td::td_api::setOption>(
-                "enable_proxy",
-                td::td_api::make_object<td::td_api::optionValueBoolean>(true)
-            )
-        );
-        enableProxy.get();
-    } catch (const std::exception& e) {
-        // Игнорируем ошибки установки прокси (они могут быть не критичны)
-        // Можно залогировать, но не прерывать инициализацию.
-    }
+    //     auto enableProxy = sendQueryTyped<td::td_api::ok>(
+    //         td::td_api::make_object<td::td_api::setOption>(
+    //             "enable_proxy",
+    //             td::td_api::make_object<td::td_api::optionValueBoolean>(true)
+    //         )
+    //     );
+    //     enableProxy.get();
+    // } catch (const std::exception& e) {
+    //     // Игнорируем ошибки установки прокси (они могут быть не критичны)
+    //     // Можно залогировать, но не прерывать инициализацию.
+    // }
 }
 
 void TelegramClient::shutdownTdLib() {
@@ -295,6 +295,18 @@ void TelegramClient::processUpdate(td::td_api::object_ptr<td::td_api::Object> up
                 entry.callback(chatId, messageId, text);
             }
         }
+    }
+    else if (id == td::td_api::updateChatPosition::ID) {
+        auto* updatePos = static_cast<td::td_api::updateChatPosition*>(update.get());
+        int64_t chatId = updatePos->chat_id_;
+        bool isPinned = updatePos->position_ && updatePos->position_->is_pinned_;
+        std::lock_guard<std::mutex> lock(pinnedMutex_);
+        if (isPinned) {
+            pinnedChats_.insert(chatId);
+        } else {
+            pinnedChats_.erase(chatId);
+        }
+        logger_->debug("Chat " + std::to_string(chatId) + " pinned: " + (isPinned ? "yes" : "no"));
     }
     else if (id == td::td_api::updateMessageSendSucceeded::ID) {
         auto* updateSend = static_cast<td::td_api::updateMessageSendSucceeded*>(update.get());
@@ -536,6 +548,11 @@ AFuture<T> TelegramClient::executeWithRetry(std::function<AFuture<T>()> operatio
             }
         }
     });
+}
+
+bool TelegramClient::isChatPinned(int64_t chatId) const {
+    std::lock_guard<std::mutex> lock(pinnedMutex_);
+    return pinnedChats_.find(chatId) != pinnedChats_.end();
 }
 
 // Явные инстанцирования для используемых типов

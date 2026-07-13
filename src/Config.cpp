@@ -18,7 +18,8 @@ static toml::value createDefaultConfig() {
     });
 
     config["auth"] = toml::value(toml::table{
-        {"papik_chat_id", 0}
+        {"papik_chat_id", 0},
+        {"chat_access_mode", "papik_only"}
     });
 
     config["logging"] = toml::value(toml::table{
@@ -57,8 +58,14 @@ Config load(const std::string& path) {
         cfg.telegram.database_directory = toml::find<std::string>(data, "telegram", "database_directory");
 
         cfg.auth.papik_chat_id = toml::find<int64_t>(data, "auth", "papik_chat_id");
+        cfg.auth.chat_access_mode = toml::find<std::string>(data, "auth", "chat_access_mode");
 
         cfg.logging.level = toml::find<std::string>(data, "logging", "level");
+
+        // Загрузка LLM
+        cfg.llm.endpoint = toml::find<std::string>(data, "llm", "endpoint");
+        cfg.llm.api_key = toml::find<std::string>(data, "llm", "api_key");
+        cfg.llm.model = toml::find<std::string>(data, "llm", "model");
     } catch (const std::out_of_range& e) {
         std::cerr << "[Config] Missing required field: " << e.what() << "\n";
         throw;
