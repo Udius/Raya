@@ -16,6 +16,9 @@
 #include <chrono>
 #include <unistd.h>
 #include <cstring>
+#include <fstream>
+#include <filesystem>
+#include <sstream>
 
 std::atomic<bool> shutdownRequested{false};
 std::atomic<bool> connected{false};
@@ -178,13 +181,31 @@ int main() {
             cfg.llm.model
         );
 
-        // Системный промпт (позже вынести в файл)
-        const std::string systemPrompt = 
-            "Ты — Рая, виртуальный ассистент с живым и дружелюбным характером. "
-            "Отвечай на вопросы кратко, по делу, но с теплотой. Ты помогаешь пользователю, "
-            "общаешься на русском языке, если пользователь пишет на русском, иначе на языке пользователя.";
+        // Загрузка системного промпта из файла
+        std::string systemPrompt;
+        std::filesystem::path promptPath = "prompts/system.md";
+        if (std::filesystem::exists(promptPath)) {
+            std::ifstream file(promptPath);
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            systemPrompt = buffer.str();
+            logger->debug("System prompt loaded from " + promptPath.string());
+        } else {
+            // Создаём дефолтный промпт
+            std::filesystem::create_directories("prompts");
+            std::ofstream file(promptPath);
+            systemPrompt =
+                "Ты — Рая, виртуальный ассистент с живым и дружелюбным характером.\n"
+                "Отвечай на вопросы кратко, по делу, но с теплотой. Ты помогаешь пользователю,\n"
+                "общаешься на русском языке, если пользователь пишет на русском, иначе на языке пользователя.";
+            file << systemPrompt;
+            logger->warn("Created default system prompt in " + promptPath.string());
+        }
 
-        auto handler = std::make_shared<core::LLMMessageHandler>(openAI, logger, systemPrompt);
+        // Создание обработчика с системным промптом и лимитом токенов
+        auto handler = std::make_shared<core::LLMMessageHandler>(
+            openAI, logger, systemPrompt, cfg.llm.max_history_tokens
+        );
 
         logger->info("Starting main agent loop...");
         core::AgentMainLoop loop(

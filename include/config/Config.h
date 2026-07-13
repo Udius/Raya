@@ -24,6 +24,7 @@ struct LlmConfig {
     std::string endpoint;
     std::string api_key;
     std::string model;
+    int max_history_tokens = 8000;
 };
 
 struct Config {

@@ -26,6 +26,13 @@ static toml::value createDefaultConfig() {
         {"level", "info"}
     });
 
+    config["llm"] = toml::value(toml::table{
+        {"endpoint", "https://polza.ai/api/v1"},
+        {"api_key", ""},
+        {"model", "google/gemini-2.5-flash-lite"},
+        {"max_history_tokens", 8000}
+    });
+
     return toml::value(std::move(config));
 }
 
@@ -66,6 +73,7 @@ Config load(const std::string& path) {
         cfg.llm.endpoint = toml::find<std::string>(data, "llm", "endpoint");
         cfg.llm.api_key = toml::find<std::string>(data, "llm", "api_key");
         cfg.llm.model = toml::find<std::string>(data, "llm", "model");
+        cfg.llm.max_history_tokens = toml::find<int>(data, "llm", "max_history_tokens");
     } catch (const std::out_of_range& e) {
         std::cerr << "[Config] Missing required field: " << e.what() << "\n";
         throw;
