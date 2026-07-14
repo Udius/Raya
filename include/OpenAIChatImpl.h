@@ -7,9 +7,9 @@
 class OpenAIChatImpl : public IOpenAIChat {
 public:
     OpenAIChatImpl(const Endpoint& endpoint, const std::string& model);
-    ~OpenAIChatImpl() override;
+    ~OpenAIChatImpl() override = default;
 
-    std::string chat(const Session& session) override;
+    ChatResponse chat(const Session& session, const std::vector<Tool>& tools = {}) override;
 
 private:
     Endpoint endpoint_;

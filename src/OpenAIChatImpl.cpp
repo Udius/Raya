@@ -19,17 +19,15 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* use
 
 OpenAIChatImpl::OpenAIChatImpl(const Endpoint& endpoint, const std::string& model)
     : endpoint_(endpoint), model_(model) {}
+    
+OpenAIChatImpl::ChatResponse OpenAIChatImpl::chat(const Session& session, const std::vector<Tool>& tools) {
+    using json = nlohmann::json;
 
-OpenAIChatImpl::~OpenAIChatImpl() {
-    // Ничего не нужно, так как curl инициализируется глобально
-}
-
-std::string OpenAIChatImpl::chat(const Session& session) {
-    // Подготовка JSON
     json requestBody;
     requestBody["model"] = model_;
     requestBody["messages"] = json::array();
 
+    // Добавляем системный промпт
     if (!session.systemPrompt.empty()) {
         json systemMsg;
         systemMsg["role"] = "system";
@@ -37,6 +35,7 @@ std::string OpenAIChatImpl::chat(const Session& session) {
         requestBody["messages"].push_back(systemMsg);
     }
 
+    // Добавляем историю (включая сообщения с ролью Tool)
     for (const auto& msg : session.messages) {
         json msgJson;
         std::string roleStr;
@@ -44,16 +43,35 @@ std::string OpenAIChatImpl::chat(const Session& session) {
             case Role::System: roleStr = "system"; break;
             case Role::User: roleStr = "user"; break;
             case Role::Assistant: roleStr = "assistant"; break;
+            case Role::Tool: roleStr = "tool"; break;
             default: continue;
         }
         msgJson["role"] = roleStr;
         msgJson["content"] = msg.content;
+        if (msg.role == Role::Tool && !msg.tool_call_id.empty()) {
+            msgJson["tool_call_id"] = msg.tool_call_id;
+        }
         requestBody["messages"].push_back(msgJson);
+    }
+
+    // Добавляем инструменты, если есть
+    if (!tools.empty()) {
+        json toolsArray = json::array();
+        for (const auto& tool : tools) {
+            json toolJson;
+            toolJson["type"] = "function";
+            toolJson["function"]["name"] = tool.function.name;
+            toolJson["function"]["description"] = tool.function.description;
+            toolJson["function"]["parameters"] = tool.function.parameters;
+            toolsArray.push_back(toolJson);
+        }
+        requestBody["tools"] = toolsArray;
     }
 
     requestBody["temperature"] = 0.7;
     requestBody["max_tokens"] = 1000;
 
+    std::cout << "[OpenAIChat] Request body:\n" << requestBody.dump(2) << std::endl;
     std::string body = requestBody.dump();
 
     // URL для запроса
@@ -111,6 +129,8 @@ std::string OpenAIChatImpl::chat(const Session& session) {
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
 
+    std::cout << "[OpenAIChat] Response body:\n" << responseString << std::endl;
+
     // Проверка статуса
     if (http_code != 200) {
         std::string errorMsg = "API returned status " + std::to_string(http_code) +
@@ -126,9 +146,35 @@ std::string OpenAIChatImpl::chat(const Session& session) {
         if (choices.empty()) {
             throw std::runtime_error("No choices in response");
         }
+
         auto message = choices[0]["message"];
-        std::string content = message["content"];
-        return content;
+        ChatResponse result;
+
+        // Проверяем наличие tool_calls
+        if (message.contains("tool_calls") && !message["tool_calls"].empty()) {
+            for (const auto& tc : message["tool_calls"]) {
+                ToolCall call;
+                call.id = tc["id"].get<std::string>();
+                call.type = tc["type"].get<std::string>();
+                call.function_name = tc["function"]["name"].get<std::string>();
+
+                // arguments может быть строкой или объектом
+                if (tc["function"]["arguments"].is_string()) {
+                    call.arguments = json::parse(tc["function"]["arguments"].get<std::string>());
+                } else {
+                    call.arguments = tc["function"]["arguments"];
+                }
+                result.tool_calls.push_back(call);
+                std::cout << "[OpenAIChat] Parsed tool call: " << call.function_name
+                        << " with args: " << call.arguments.dump() << std::endl;
+            }
+        } else if (message.contains("content") && message["content"].is_string()) {
+            result.content = message["content"].get<std::string>();
+        } else {
+            throw std::runtime_error("Unexpected response format");
+        }
+
+        return result;
     } catch (const std::exception& e) {
         std::cerr << "[OpenAIChat] Parse error: " << e.what() << std::endl;
         throw std::runtime_error("Failed to parse response: " + std::string(e.what()));

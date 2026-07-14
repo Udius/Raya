@@ -1,11 +1,24 @@
-// include/core/LLMMessageHandler.h
 #pragma once
 #include "core/IMessageHandler.h"
 #include "IOpenAIChat.h"
 #include "common/ILogger.h"
+
 #include <memory>
+#include <functional>
+#include <map>
+#include <vector>
 
 namespace core {
+
+class ToolRegistry {
+public:
+    using ToolHandler = std::function<std::string(const nlohmann::json&)>;
+    void registerTool(const std::string& name, ToolHandler handler);
+    std::string execute(const std::string& name, const nlohmann::json& args) const;
+    bool hasTool(const std::string& name) const;
+private:
+    std::map<std::string, ToolHandler> handlers_;
+};
 
 class LLMMessageHandler : public IMessageHandler {
 public:
@@ -13,26 +26,34 @@ public:
         std::shared_ptr<IOpenAIChat> openAI,
         std::shared_ptr<common::ILogger> logger,
         const std::string& systemPrompt,
-        int maxHistoryTokens
+        int maxHistoryTokens,
+        std::shared_ptr<ToolRegistry> toolRegistry,
+        const std::vector<IOpenAIChat::Tool>& availableTools = {}
     );
-
     std::string handle(const event::Event& event) override;
 
 private:
+    // Подсчёт токенов и обрезка истории
     int countTokens(const std::string& text) const;
     int countHistoryTokens() const;
     void trimHistoryByTokens();
+    void trimHistoryByTokens(std::vector<IOpenAIChat::Message>& history) const; // перегрузка для временной истории
 
     // Сохранение/загрузка истории
     void saveHistory() const;
     void loadHistory();
 
+    // Поля
     std::shared_ptr<IOpenAIChat> openAI_;
     std::shared_ptr<common::ILogger> logger_;
     std::string systemPrompt_;
     std::vector<IOpenAIChat::Message> history_;
     int maxHistoryTokens_;
-    std::string historyFilePath_;   // "data/history.json"
+    std::string historyFilePath_;
+    std::shared_ptr<ToolRegistry> toolRegistry_;
+    std::vector<IOpenAIChat::Tool> availableTools_;
+
+    static constexpr int MAX_TOOL_ITERATIONS = 5;
 };
 
 } // namespace core

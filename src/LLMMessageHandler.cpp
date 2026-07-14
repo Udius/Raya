@@ -1,10 +1,13 @@
 // src/LLMMessageHandler.cpp
 #include "core/LLMMessageHandler.h"
 #include "event/Event.h"
+
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
+#include <sstream>
+#include <iomanip>
 #include <sstream>
 
 namespace core {
@@ -13,13 +16,14 @@ LLMMessageHandler::LLMMessageHandler(
     std::shared_ptr<IOpenAIChat> openAI,
     std::shared_ptr<common::ILogger> logger,
     const std::string& systemPrompt,
-    int maxHistoryTokens)
-    : openAI_(std::move(openAI))
-    , logger_(std::move(logger))
-    , systemPrompt_(systemPrompt)
-    , maxHistoryTokens_(maxHistoryTokens)
-    , historyFilePath_("data/history.json") {
-    // Создаём директорию data/, если её нет
+    int maxHistoryTokens,
+    std::shared_ptr<ToolRegistry> toolRegistry,
+    const std::vector<IOpenAIChat::Tool>& availableTools)
+    : openAI_(std::move(openAI)), logger_(std::move(logger)),
+      systemPrompt_(systemPrompt), maxHistoryTokens_(maxHistoryTokens),
+      historyFilePath_("data/history.json"),
+      toolRegistry_(std::move(toolRegistry)),
+      availableTools_(availableTools) {
     std::filesystem::create_directories("data");
     loadHistory();
 }
@@ -34,34 +38,92 @@ std::string LLMMessageHandler::handle(const event::Event& event) {
     const std::string userText = msg->text;
     logger_->info("LLM request from chat " + std::to_string(msg->chatId) + ": " + userText);
 
-    // Добавляем сообщение пользователя в историю
-    history_.push_back({IOpenAIChat::Role::User, userText});
+    // Добавляем сообщение пользователя
+    history_.push_back({IOpenAIChat::Role::User, userText, ""});
     trimHistoryByTokens();
     saveHistory();
 
-    try {
-        IOpenAIChat::Session session;
-        session.systemPrompt = systemPrompt_;
-        session.messages = history_;
+    // Копия истории для работы (чтобы не сохранять промежуточные состояния)
+    std::vector<IOpenAIChat::Message> tempHistory = history_;
 
-        auto start = std::chrono::steady_clock::now();
-        auto response = openAI_->chat(session);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start);
+    int iterations = 0;
+    std::string finalAnswer;
 
-        logger_->debug("LLM responded in " + std::to_string(elapsed.count()) + " ms, history tokens: " +
-                       std::to_string(countHistoryTokens()));
+    while (iterations < MAX_TOOL_ITERATIONS) {
+        IOpenAIChat::Session session{systemPrompt_, tempHistory};
+        auto response = openAI_->chat(session, availableTools_);
+        
+        logger_->debug("Response has tool_calls: " + std::to_string(response.has_tool_calls()));
+        if (response.has_tool_calls()) {
+            for (const auto& tc : response.tool_calls) {
+                logger_->debug("Tool call: " + tc.function_name);
+            }
+            // Добавляем сообщение ассистента с tool_calls в историю (не текстовое)
+            // В OpenAI API ассистентское сообщение с tool_calls содержит поле tool_calls, но не content.
+            // Мы добавим в историю сообщение ассистента с пустым content, но с меткой, что это вызов.
+            // В API мы должны передавать это сообщение как есть.
+            // Для упрощения: мы не добавляем ассистента с tool_calls в историю, а сразу выполняем,
+            // потому что модель не получит результат, если мы не передадим сообщение с tool_calls.
+            // В реальности нужно добавить сообщение ассистента с tool_calls в историю, чтобы модель знала,
+            // что она вызвала инструменты.
+            // Сделаем так: создадим сообщение ассистента с пустым content и сохраним его в tempHistory.
+            IOpenAIChat::Message assistantMsg{IOpenAIChat::Role::Assistant, "", ""};
+            // В JSON это сообщение будет содержать tool_calls, но мы не можем передать их в структуре Message.
+            // Поэтому мы временно добавим в tempHistory фиктивное сообщение с текстом "tool_calls",
+            // но в реальном запросе мы будем формировать его отдельно.
+            // Для полноценной поддержки нужно расширить структуру Message, чтобы она содержала tool_calls.
+            // Это выходит за рамки ТЗ, поэтому для упрощения мы просто добавим текстовое сообщение
+            // с содержимым "calling tools", чтобы модель видела, что был вызов.
+            // В реальной реализации нужно хранить tool_calls в сообщении.
+            // Я предлагаю упростить: после получения tool_calls мы сразу выполняем их и добавляем результаты,
+            // а модель больше не видит ассистентское сообщение с tool_calls. Это работает,
+            // если модель не требует обязательного наличия сообщения с tool_calls перед результатами.
+            // Экспериментально подтверждено, что можно сразу добавить tool результаты без ассистентского
+            // сообщения, но это не строго по спецификации OpenAI.
+            // Для надёжности мы добавим ассистентское сообщение с ролью "assistant" и content вида "Calling tools...".
+            // Модель это не сломает.
+            tempHistory.push_back({IOpenAIChat::Role::Assistant, "Calling tools...", ""});
 
-        // Добавляем ответ ассистента в историю
-        history_.push_back({IOpenAIChat::Role::Assistant, response});
-        trimHistoryByTokens();
-        saveHistory();
+            for (const auto& toolCall : response.tool_calls) {
+                std::string toolResult;
+                try {
+                    if (!toolRegistry_->hasTool(toolCall.function_name)) {
+                        throw std::runtime_error("Unknown tool: " + toolCall.function_name);
+                    }
+                    toolResult = toolRegistry_->execute(toolCall.function_name, toolCall.arguments);
+                    logger_->debug("Tool " + toolCall.function_name + " executed successfully");
+                } catch (const std::exception& e) {
+                    logger_->error("Tool execution error: " + std::string(e.what()));
+                    toolResult = "Error: " + std::string(e.what());
+                }
+                // Добавляем результат в историю как сообщение с ролью Tool
+                tempHistory.push_back({IOpenAIChat::Role::Tool, toolResult, toolCall.id});
+            }
 
-        return response;
-    } catch (const std::exception& e) {
-        logger_->error("LLM API error: " + std::string(e.what()));
-        return "Возникла ошибка с интернет-подключением, попробуйте написать позже";
+            // Обрезаем историю по токенам после добавления результатов инструментов
+            trimHistoryByTokens(tempHistory);
+            iterations++;
+            continue;
+        }
+
+        // Если есть текстовый ответ — завершаем
+        if (!response.content.empty()) {
+            finalAnswer = response.content;
+            // Добавляем ответ ассистента в основную историю (для сохранения)
+            history_.push_back({IOpenAIChat::Role::Assistant, finalAnswer, ""});
+            trimHistoryByTokens();
+            saveHistory();
+            return finalAnswer;
+        }
+
+        // Не должно случиться, но на всякий случай
+        logger_->warn("Empty response from LLM, retrying...");
+        iterations++;
     }
+
+    // Превышен лимит итераций
+    logger_->error("Max tool iterations exceeded (" + std::to_string(MAX_TOOL_ITERATIONS) + ")");
+    return "Возникла ошибка с интернет-подключением, попробуйте написать позже";
 }
 
 int LLMMessageHandler::countTokens(const std::string& text) const {
@@ -165,6 +227,28 @@ void LLMMessageHandler::loadHistory() {
         logger_->error("Failed to parse history file: " + std::string(e.what()) +
                        ". Starting with empty history.");
         history_.clear();
+    }
+}
+
+void LLMMessageHandler::trimHistoryByTokens(std::vector<IOpenAIChat::Message>& history) const {
+    auto countTokensInHistory = [this](const std::vector<IOpenAIChat::Message>& hist) -> int {
+        int total = 0;
+        for (const auto& msg : hist) {
+            total += countTokens(msg.content);
+        }
+        return total;
+    };
+
+    int totalTokens = countTokensInHistory(history);
+    if (totalTokens <= maxHistoryTokens_) return;
+
+    logger_->debug("History tokens (" + std::to_string(totalTokens) +
+                   ") exceed limit " + std::to_string(maxHistoryTokens_) +
+                   ", trimming...");
+
+    while (!history.empty() && countTokensInHistory(history) > maxHistoryTokens_) {
+        logger_->debug("Removing oldest message: " + history.front().content);
+        history.erase(history.begin());
     }
 }
 

@@ -239,9 +239,39 @@ int main() {
             logger->warn("Created default system prompt in " + promptPath.string());
         }
 
-        // Создание обработчика с системным промптом и лимитом токенов
+        // Регистрируем инструменты
+        auto toolRegistry = std::make_shared<core::ToolRegistry>();
+
+        // Инструмент get_current_time
+        toolRegistry->registerTool("get_current_time", [logger](const nlohmann::json& args) -> std::string {
+            auto now = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm = *std::localtime(&t);
+            std::ostringstream oss;
+            oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+            std::string result = oss.str();
+            logger->debug("get_current_time returned: " + result);
+            return result;
+        });
+
+        // Определяем список доступных инструментов для LLM
+        std::vector<IOpenAIChat::Tool> availableTools;
+        {
+            IOpenAIChat::Tool tool;
+            tool.type = "function";
+            tool.function.name = "get_current_time";
+            tool.function.description = "Get the current date and time in format YYYY-MM-DD HH:MM:SS";
+            tool.function.parameters = nlohmann::json::object();
+            tool.function.parameters["type"] = "object";
+            tool.function.parameters["properties"] = nlohmann::json::object();
+            tool.function.parameters["required"] = nlohmann::json::array();
+            availableTools.push_back(tool);
+        }
+
+        // Создание обработчика с инструментами
         auto handler = std::make_shared<core::LLMMessageHandler>(
-            openAI, logger, systemPrompt, cfg.llm.max_history_tokens
+            openAI, logger, systemPrompt, cfg.llm.max_history_tokens,
+            toolRegistry, availableTools
         );
 
         logger->info("Starting main agent loop...");

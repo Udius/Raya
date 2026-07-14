@@ -78,6 +78,7 @@ add_library(core
     src/EchoMessageHandler.cpp
     src/LLMMessageHandler.cpp
     src/OpenAIChatImpl.cpp
+    src/ToolRegistry.cpp
 )
 target_include_directories(core PUBLIC include)
 target_link_libraries(core
