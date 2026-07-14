@@ -6,6 +6,7 @@
 #include "core/IMessageHandler.h"
 #include "common/ILogger.h"
 #include "event/PriorityResolver.h"
+#include "common/UserOutput.h"
 
 #include <memory>
 #include <atomic>
@@ -33,7 +34,8 @@ public:
         std::shared_ptr<event::PriorityResolver> resolver,
         int64_t papikChatId,
         const std::string& accessMode,
-        std::shared_ptr<common::ILogger> logger = std::make_shared<common::NullLogger>()
+        std::shared_ptr<common::ILogger> logger = std::make_shared<common::NullLogger>(),
+        std::shared_ptr<common::UserOutput> userOutput = nullptr
     );
     
     ~AgentMainLoop();
@@ -53,6 +55,7 @@ private:
     std::shared_ptr<event::IEventQueue> queue_;
     std::shared_ptr<IMessageHandler> handler_;
     std::shared_ptr<common::ILogger> logger_;
+    std::shared_ptr<common::UserOutput> userOutput_;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> shouldStop_{false};

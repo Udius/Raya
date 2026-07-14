@@ -23,7 +23,10 @@ static toml::value createDefaultConfig() {
     });
 
     config["logging"] = toml::value(toml::table{
-        {"level", "info"}
+        {"level", "warn"}
+    });
+    config["output"] = toml::value(toml::table{
+        {"level", "deep"}
     });
 
     config["llm"] = toml::value(toml::table{
@@ -68,6 +71,7 @@ Config load(const std::string& path) {
         cfg.auth.chat_access_mode = toml::find<std::string>(data, "auth", "chat_access_mode");
 
         cfg.logging.level = toml::find<std::string>(data, "logging", "level");
+        cfg.output.level = toml::find<std::string>(data, "output", "level");
 
         // Загрузка LLM
         cfg.llm.endpoint = toml::find<std::string>(data, "llm", "endpoint");

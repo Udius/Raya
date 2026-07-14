@@ -24,14 +24,16 @@ AgentMainLoop::AgentMainLoop(
     std::shared_ptr<event::PriorityResolver> resolver,
     int64_t papikChatId,
     const std::string& accessMode,
-    std::shared_ptr<common::ILogger> logger)
+    std::shared_ptr<common::ILogger> logger,
+    std::shared_ptr<common::UserOutput> userOutput)
     : client_(std::move(client))
     , queue_(std::move(queue))
     , handler_(std::move(handler))
     , resolver_(std::move(resolver))
     , papikChatId_(papikChatId)
     , accessMode_(accessMode)
-    , logger_(logger ? logger : std::make_shared<common::NullLogger>()) {}
+    , logger_(logger ? logger : std::make_shared<common::NullLogger>())
+    , userOutput_(std::move(userOutput)) {}
 
 // ------------------------------------------------------------------
 // Деструктор (опционально, но для полноты)

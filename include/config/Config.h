@@ -27,11 +27,16 @@ struct LlmConfig {
     int max_history_tokens = 8000;
 };
 
+struct OutputConfig {
+    std::string level; // none, tools, main, deep
+};
+
 struct Config {
     TelegramConfig telegram;
     AuthConfig auth;
     LoggingConfig logging;
     LlmConfig llm;
+    OutputConfig output;
 };
 
 /// Загружает конфигурацию из файла config.toml.

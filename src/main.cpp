@@ -8,6 +8,7 @@
 #include "TelegramClient.h"
 #include "OpenAIChatImpl.h"
 #include "core/LLMMessageHandler.h"
+#include "common/UserOutput.h"
 
 #include <csignal>
 #include <atomic>
@@ -124,7 +125,6 @@ void consoleCommandsLoop(std::atomic<bool>& shutdownRequested) {
         size_t end = line.find_last_not_of(" \t\n\r");
         line = line.substr(start, end - start + 1);
 
-        // Эхо-вывод введённой команды
         std::cout << "> " << std::flush;
 
         if (line == "close" || line == "exit") {
@@ -162,6 +162,9 @@ int main() {
         logger = std::make_shared<common::ConsoleLogger>(
             common::ConsoleLogger::fromString(cfg.logging.level)
         );
+
+        auto outputLevel = common::UserOutput::fromString(cfg.output.level);
+        auto userOutput = std::make_shared<common::UserOutput>(outputLevel);
 
         logger->info("Initializing Telegram client...");
         auto client = std::make_shared<telegram::TelegramClient>();
@@ -271,7 +274,7 @@ int main() {
         // Создание обработчика с инструментами
         auto handler = std::make_shared<core::LLMMessageHandler>(
             openAI, logger, systemPrompt, cfg.llm.max_history_tokens,
-            toolRegistry, availableTools
+            toolRegistry, availableTools, userOutput
         );
 
         logger->info("Starting main agent loop...");
@@ -282,7 +285,8 @@ int main() {
             resolver, 
             cfg.auth.papik_chat_id, 
             cfg.auth.chat_access_mode, 
-            logger
+            logger,
+            userOutput
         );
         std::thread loopThread([&loop]() { loop.run(); });
 
@@ -290,7 +294,7 @@ int main() {
         std::thread cmdThread(consoleCommandsLoop, std::ref(shutdownRequested));
         std::cout << "Type 'help' for available commands.\n" << std::flush;
 
-        logger->info("Agent is running. Press Ctrl+C to stop.");
+        logger->info("Agent is finally running. You can press Ctrl+C to terminate it or use 'close' for graceful shutdown.");
         while (!shutdownRequested) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }

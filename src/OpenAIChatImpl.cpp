@@ -71,7 +71,6 @@ OpenAIChatImpl::ChatResponse OpenAIChatImpl::chat(const Session& session, const 
     requestBody["temperature"] = 0.7;
     requestBody["max_tokens"] = 1000;
 
-    std::cout << "[OpenAIChat] Request body:\n" << requestBody.dump(2) << std::endl;
     std::string body = requestBody.dump();
 
     // URL для запроса
@@ -129,8 +128,6 @@ OpenAIChatImpl::ChatResponse OpenAIChatImpl::chat(const Session& session, const 
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
 
-    std::cout << "[OpenAIChat] Response body:\n" << responseString << std::endl;
-
     // Проверка статуса
     if (http_code != 200) {
         std::string errorMsg = "API returned status " + std::to_string(http_code) +
@@ -165,8 +162,6 @@ OpenAIChatImpl::ChatResponse OpenAIChatImpl::chat(const Session& session, const 
                     call.arguments = tc["function"]["arguments"];
                 }
                 result.tool_calls.push_back(call);
-                std::cout << "[OpenAIChat] Parsed tool call: " << call.function_name
-                        << " with args: " << call.arguments.dump() << std::endl;
             }
         } else if (message.contains("content") && message["content"].is_string()) {
             result.content = message["content"].get<std::string>();

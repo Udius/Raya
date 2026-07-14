@@ -2,6 +2,7 @@
 #include "core/IMessageHandler.h"
 #include "IOpenAIChat.h"
 #include "common/ILogger.h"
+#include "common/UserOutput.h"
 
 #include <memory>
 #include <functional>
@@ -28,7 +29,8 @@ public:
         const std::string& systemPrompt,
         int maxHistoryTokens,
         std::shared_ptr<ToolRegistry> toolRegistry,
-        const std::vector<IOpenAIChat::Tool>& availableTools = {}
+        const std::vector<IOpenAIChat::Tool>& availableTools = {},
+        std::shared_ptr<common::UserOutput> userOutput = nullptr
     );
     std::string handle(const event::Event& event) override;
 
@@ -46,6 +48,7 @@ private:
     // Поля
     std::shared_ptr<IOpenAIChat> openAI_;
     std::shared_ptr<common::ILogger> logger_;
+    std::shared_ptr<common::UserOutput> userOutput_;
     std::string systemPrompt_;
     std::vector<IOpenAIChat::Message> history_;
     int maxHistoryTokens_;

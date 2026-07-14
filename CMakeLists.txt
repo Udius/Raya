@@ -79,6 +79,7 @@ add_library(core
     src/LLMMessageHandler.cpp
     src/OpenAIChatImpl.cpp
     src/ToolRegistry.cpp
+    src/UserOutput.cpp
 )
 target_include_directories(core PUBLIC include)
 target_link_libraries(core
