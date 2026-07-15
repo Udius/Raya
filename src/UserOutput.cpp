@@ -17,7 +17,8 @@ namespace {
 
 UserOutput::UserOutput(OutputLevel level)
     : level_(level)
-    , useColors_(isatty(STDOUT_FILENO) != 0) {}
+    , useColors_(isatty(STDOUT_FILENO) != 0)
+    , needEmptyLine_(false) {}
 
 OutputLevel UserOutput::fromString(const std::string& str) {
     if (str == "none") return OutputLevel::None;
@@ -50,41 +51,48 @@ void UserOutput::printWithPrefix(const std::string& prefix, const std::string& t
 
 void UserOutput::onMessageReceived(const std::string& text, int64_t chatId) {
     if (level_ < OutputLevel::Main) return;
-    std::string prefix = "Now I'm reading this message from chat " + std::to_string(chatId) + ":\n";
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
+    std::string prefix = "Now I'm reading this message from chat " + std::to_string(chatId) + ":";
     printWithPrefix(prefix, text);
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onThinkingStart() {
     if (level_ < OutputLevel::Main) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     printWithPrefix(">", "Thinking...", useColors_ ? COLOR_GRAY : "");
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onThinkingDone(double seconds) {
     if (level_ < OutputLevel::Tools) return;
-    std::string msg = "Thinking done (" + std::to_string(seconds) + "s)";
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
+    std::string msg = "Done (" + std::to_string(seconds) + "s)";
     printWithPrefix(">", msg, useColors_ ? COLOR_GRAY : "");
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onThinkingError(const std::string& errorMessage) {
     if (level_ < OutputLevel::Main) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     std::string prefix = ">";
     std::string text = "Thinking error";
     if (useColors_) {
-        // оранжевый/жёлтый для слова error
         std::string colored = std::string(COLOR_YELLOW) + "error" + COLOR_RESET;
         text = "Thinking " + colored;
     } else {
         text = "Thinking error";
     }
     printWithPrefix(prefix, text, useColors_ ? COLOR_WHITE : "", false);
-    // Дублируем текст ошибки светло-серым
     if (!errorMessage.empty()) {
         printWithPrefix(">", errorMessage, useColors_ ? COLOR_GRAY : "");
     }
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onToolCall(const std::string& name, const std::string& args) {
     if (level_ < OutputLevel::Tools) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     std::string msg = "Tool: " + name;
     if (!args.empty()) {
         if (useColors_) {
@@ -94,21 +102,63 @@ void UserOutput::onToolCall(const std::string& name, const std::string& args) {
         }
     }
     printWithPrefix(">", msg, useColors_ ? COLOR_WHITE : "");
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onToolResult(const std::string& result) {
     if (level_ < OutputLevel::Tools) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     printWithPrefix("> Tool result:", result, useColors_ ? COLOR_GRAY : "");
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onReplySent(const std::string& text) {
     if (level_ < OutputLevel::Main) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     printWithPrefix(">", text);
+    needEmptyLine_ = true;
 }
 
 void UserOutput::onThought(const std::string& thought) {
     if (level_ < OutputLevel::Deep) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
     printWithPrefix("> [thought]", thought, useColors_ ? COLOR_GRAY : "");
+    needEmptyLine_ = true;
+}
+
+void UserOutput::onSelfModelUpdated(const std::string& description,
+                                    const std::vector<std::string>& interests,
+                                    const std::vector<std::string>& goals) {
+    if (level_ < OutputLevel::Main) return;
+    if (needEmptyLine_) { printLine(""); needEmptyLine_ = false; }
+    // Заголовок
+    std::string header = "> Self-model updated:";
+    if (useColors_) header = COLOR_GRAY + header + COLOR_RESET;
+    printLine(header);
+    // Отступы для деталей
+    auto printIndented = [this](const std::string& text, bool gray = true) {
+        std::string out = "  " + text;
+        if (useColors_ && gray) out = COLOR_GRAY + out + COLOR_RESET;
+        printLine(out);
+    };
+    printIndented("Mood: " + description);
+    if (!interests.empty()) {
+        std::string interestsStr = "Interests: ";
+        for (size_t i = 0; i < interests.size(); ++i) {
+            if (i > 0) interestsStr += ", ";
+            interestsStr += interests[i];
+        }
+        printIndented(interestsStr);
+    }
+    if (!goals.empty()) {
+        std::string goalsStr = "Goals: ";
+        for (size_t i = 0; i < goals.size(); ++i) {
+            if (i > 0) goalsStr += ", ";
+            goalsStr += goals[i];
+        }
+        printIndented(goalsStr);
+    }
+    needEmptyLine_ = true;
 }
 
 } // namespace common

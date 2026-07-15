@@ -12,6 +12,7 @@
 #include <sstream>
 #include <nlohmann/json.hpp>
 #include <iomanip>
+#include <chrono>
 
 using json = nlohmann::json;
 
@@ -119,7 +120,11 @@ void SelfModelManager::update(const std::vector<IOpenAIChat::Message>& history,
     if (userOutput) userOutput->onThinkingStart();
 
     try {
+        auto start_time = std::chrono::steady_clock::now();
         auto response = chat->chat(session, {}); // no tools
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_time
+        );
         if (response.content.empty()) {
             if (logger) logger->warn("SelfModel update: LLM returned empty response");
             if (userOutput) userOutput->onThinkingError("Empty response from LLM");
@@ -196,8 +201,10 @@ void SelfModelManager::update(const std::vector<IOpenAIChat::Message>& history,
         save(state_);
         if (logger) logger->info("Self-model updated successfully");
         if (userOutput) {
-            userOutput->onThinkingDone(0.0);
-            userOutput->onReplySent("Self-model updated");
+            userOutput->onThinkingDone(elapsed.count() / 1000.0);
+            userOutput->onSelfModelUpdated(state_.state_description,
+                                       state_.interests,
+                                       state_.goals);
         }
 
     } catch (const std::exception& e) {

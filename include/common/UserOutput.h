@@ -2,6 +2,7 @@
 
 #include <string>
 #include <chrono>
+#include <vector>
 
 namespace common {
 
@@ -30,10 +31,14 @@ public:
 
     // Статический метод для парсинга строки уровня
     static OutputLevel fromString(const std::string& str);
+    void onSelfModelUpdated(const std::string& description,
+                            const std::vector<std::string>& interests,
+                            const std::vector<std::string>& goals);
 
 private:
     OutputLevel level_;
     bool useColors_;
+    bool needEmptyLine_ = false;
 
     void printLine(const std::string& line);
     void printWithPrefix(const std::string& prefix, const std::string& text,
