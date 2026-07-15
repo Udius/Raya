@@ -3,6 +3,8 @@
 #include "IOpenAIChat.h"
 #include "common/ILogger.h"
 #include "common/UserOutput.h"
+#include "core/SelfModelManager.h"
+#include "EmbeddingClient.h"
 
 #include <memory>
 #include <functional>
@@ -30,7 +32,10 @@ public:
         int maxHistoryTokens,
         std::shared_ptr<ToolRegistry> toolRegistry,
         const std::vector<IOpenAIChat::Tool>& availableTools = {},
-        std::shared_ptr<common::UserOutput> userOutput = nullptr
+        std::shared_ptr<common::UserOutput> userOutput = nullptr,
+        std::shared_ptr<SelfModelManager> selfModel = nullptr,
+        std::shared_ptr<EmbeddingClient> embeddingClient = nullptr,
+        int updateAfterNResponses = 5
     );
     std::string handle(const event::Event& event) override;
 
@@ -45,7 +50,13 @@ private:
     void saveHistory() const;
     void loadHistory();
 
+    std::string buildSystemPrompt() const;
+
     // Поля
+    std::shared_ptr<EmbeddingClient> embeddingClient_;
+    int updateAfterNResponses_;
+    int responseCount_ = 0;
+    std::shared_ptr<SelfModelManager> selfModel_;
     std::shared_ptr<IOpenAIChat> openAI_;
     std::shared_ptr<common::ILogger> logger_;
     std::shared_ptr<common::UserOutput> userOutput_;

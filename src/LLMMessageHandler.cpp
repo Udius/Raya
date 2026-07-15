@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <sstream>
 #include <chrono>
+#include <numeric>
 
 namespace core {
 
@@ -20,7 +21,10 @@ LLMMessageHandler::LLMMessageHandler(
     int maxHistoryTokens,
     std::shared_ptr<ToolRegistry> toolRegistry,
     const std::vector<IOpenAIChat::Tool>& availableTools,
-    std::shared_ptr<common::UserOutput> userOutput)
+    std::shared_ptr<common::UserOutput> userOutput,
+    std::shared_ptr<SelfModelManager> selfModel,
+    std::shared_ptr<EmbeddingClient> embeddingClient,
+    int updateAfterNResponses)
     : openAI_(std::move(openAI))
     , logger_(std::move(logger))
     , userOutput_(std::move(userOutput))
@@ -28,7 +32,10 @@ LLMMessageHandler::LLMMessageHandler(
     , maxHistoryTokens_(maxHistoryTokens)
     , historyFilePath_("data/history.json")
     , toolRegistry_(std::move(toolRegistry))
-    , availableTools_(availableTools) {
+    , availableTools_(availableTools)
+    , selfModel_(std::move(selfModel))
+    , embeddingClient_(std::move(embeddingClient))
+    , updateAfterNResponses_(updateAfterNResponses) {
     std::filesystem::create_directories("data");
     loadHistory();
 }
@@ -59,7 +66,7 @@ std::string LLMMessageHandler::handle(const event::Event& event) {
     std::string finalAnswer;
 
     while (iterations < MAX_TOOL_ITERATIONS) {
-        IOpenAIChat::Session session{systemPrompt_, tempHistory};
+        IOpenAIChat::Session session{buildSystemPrompt(), tempHistory};
         
         // Измеряем время выполнения запроса
         auto start = std::chrono::steady_clock::now();
@@ -124,6 +131,23 @@ std::string LLMMessageHandler::handle(const event::Event& event) {
             if (userOutput_) {
                 userOutput_->onReplySent(finalAnswer);
             }
+
+            // Проверка триггера обновления само-модели
+            if (selfModel_ && updateAfterNResponses_ > 0) {
+                responseCount_++;
+                if (responseCount_ >= updateAfterNResponses_) {
+                    logger_->info("Triggering self-model update after " + std::to_string(responseCount_) + " responses");
+                    if (userOutput_) {
+                        userOutput_->onThinkingStart();
+                        userOutput_->onThought("Updating self-model...");
+                    }
+                    selfModel_->update(history_, openAI_, embeddingClient_, logger_, userOutput_);
+                    responseCount_ = 0; // сброс счётчика
+                }
+            }
+
+            return finalAnswer;
+
             return finalAnswer;
         }
 
@@ -266,6 +290,34 @@ void LLMMessageHandler::trimHistoryByTokens(std::vector<IOpenAIChat::Message>& h
         logger_->debug("Removing oldest message: " + history.front().content);
         history.erase(history.begin());
     }
+}
+
+std::string LLMMessageHandler::buildSystemPrompt() const {
+    std::string result = systemPrompt_;
+    if (selfModel_ && selfModel_->hasState()) {
+        result += "\n\nМоё текущее состояние/настроение:\n";
+        result += selfModel_->getDescription();
+
+        const auto& interests = selfModel_->getInterests();
+        if (!interests.empty()) {
+            result += "\nМои интересы: ";
+            for (size_t i = 0; i < interests.size(); ++i) {
+                if (i > 0) result += ", ";
+                result += interests[i];
+            }
+        }
+
+        const auto& goals = selfModel_->getGoals();
+        if (!goals.empty()) {
+            result += "\nМои цели: ";
+            for (size_t i = 0; i < goals.size(); ++i) {
+                if (i > 0) result += ", ";
+                result += goals[i];
+            }
+        }
+    }
+
+    return result;
 }
 
 } // namespace core

@@ -22,18 +22,29 @@ static toml::value createDefaultConfig() {
         {"chat_access_mode", "papik_only"}
     });
 
-    config["logging"] = toml::value(toml::table{
-        {"level", "warn"}
-    });
-    config["output"] = toml::value(toml::table{
-        {"level", "deep"}
-    });
-
     config["llm"] = toml::value(toml::table{
         {"endpoint", "https://polza.ai/api/v1"},
         {"api_key", ""},
         {"model", "google/gemini-2.5-flash-lite"},
         {"max_history_tokens", 8000}
+    });
+
+    config["additional_llm"] = toml::value(toml::table{
+        {"embedding_endpoint", ""},
+        {"embedding_api_key", ""},
+        {"embedding_model", ""}
+    });
+
+    config["self_model"] = toml::value(toml::table{
+        {"update_after_n_responses", 5}
+    });
+
+    config["logging"] = toml::value(toml::table{
+        {"level", "warn"}
+    });
+    
+    config["output"] = toml::value(toml::table{
+        {"level", "deep"}
     });
 
     return toml::value(std::move(config));
@@ -63,6 +74,12 @@ Config load(const std::string& path) {
 
     Config cfg;
     try {
+        cfg.additional_llm.embedding_endpoint = toml::find<std::string>(data, "additional_llm", "embedding_endpoint");
+        cfg.additional_llm.embedding_api_key = toml::find<std::string>(data, "additional_llm", "embedding_api_key");
+        cfg.additional_llm.embedding_model = toml::find<std::string>(data, "additional_llm", "embedding_model");
+
+        cfg.self_model.update_after_n_responses = toml::find<int>(data, "self_model", "update_after_n_responses");
+
         cfg.telegram.api_id = toml::find<int>(data, "telegram", "api_id");
         cfg.telegram.api_hash = toml::find<std::string>(data, "telegram", "api_hash");
         cfg.telegram.database_directory = toml::find<std::string>(data, "telegram", "database_directory");

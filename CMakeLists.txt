@@ -80,7 +80,11 @@ add_library(core
     src/OpenAIChatImpl.cpp
     src/ToolRegistry.cpp
     src/UserOutput.cpp
+    src/SelfModelManager.cpp
+    src/EmbeddingClient.cpp
+    src/SelfModelManager.cpp
 )
+
 target_include_directories(core PUBLIC include)
 target_link_libraries(core
     event_queue

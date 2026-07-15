@@ -31,16 +31,28 @@ struct OutputConfig {
     std::string level; // none, tools, main, deep
 };
 
+struct AdditionalLlmConfig {
+    std::string embedding_endpoint;
+    std::string embedding_api_key;
+    std::string embedding_model;
+};
+
+struct SelfModelConfig {
+    int update_after_n_responses = 5;
+};
+
 struct Config {
     TelegramConfig telegram;
     AuthConfig auth;
     LoggingConfig logging;
     LlmConfig llm;
+    AdditionalLlmConfig additional_llm;
+    SelfModelConfig self_model;
     OutputConfig output;
 };
 
 /// Загружает конфигурацию из файла config.toml.
 /// Если файл не существует, создаёт его с дефолтными значениями.
-Config load(const std::string& path = "config.toml");
+Config load(const std::string& path = "../config.toml");
 
 } // namespace config

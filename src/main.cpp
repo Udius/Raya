@@ -1,14 +1,16 @@
 #include "config/Config.h"
 #include "telegram/ITelegramClient.h"
 #include "event/PriorityEventQueue.h"
+#include "event/PriorityResolver.h"
 #include "core/AgentMainLoop.h"
 #include "core/EchoMessageHandler.h"
-#include "common/ILogger.h"
-#include "event/PriorityResolver.h"
+#include "core/LLMMessageHandler.h"
 #include "TelegramClient.h"
 #include "OpenAIChatImpl.h"
-#include "core/LLMMessageHandler.h"
 #include "common/UserOutput.h"
+#include "common/ILogger.h"
+#include "core/SelfModelManager.h"
+#include "EmbeddingClient.h"
 
 #include <csignal>
 #include <atomic>
@@ -165,6 +167,7 @@ int main() {
 
         auto outputLevel = common::UserOutput::fromString(cfg.output.level);
         auto userOutput = std::make_shared<common::UserOutput>(outputLevel);
+        auto selfModel = std::make_shared<core::SelfModelManager>();
 
         logger->info("Initializing Telegram client...");
         auto client = std::make_shared<telegram::TelegramClient>();
@@ -271,10 +274,24 @@ int main() {
             availableTools.push_back(tool);
         }
 
+        std::shared_ptr<EmbeddingClient> embeddingClient;
+        if (!cfg.additional_llm.embedding_endpoint.empty() && !cfg.additional_llm.embedding_api_key.empty()) {
+            EmbeddingClient::Endpoint embEndpoint{
+                cfg.additional_llm.embedding_endpoint,
+                cfg.additional_llm.embedding_api_key,
+                cfg.additional_llm.embedding_model
+            };
+            embeddingClient = std::make_shared<EmbeddingClient>(embEndpoint);
+            logger->info("Embedding client initialized");
+        } else {
+            logger->warn("Embedding client not configured, self-model will not use embeddings");
+        }
+
         // Создание обработчика с инструментами
         auto handler = std::make_shared<core::LLMMessageHandler>(
             openAI, logger, systemPrompt, cfg.llm.max_history_tokens,
-            toolRegistry, availableTools, userOutput
+            toolRegistry, availableTools, userOutput, selfModel,
+            embeddingClient, cfg.self_model.update_after_n_responses
         );
 
         logger->info("Starting main agent loop...");
@@ -299,7 +316,7 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-                logger->info("Shutdown requested. Stopping...");
+        logger->info("Shutdown requested. Stopping...");
 
         // Принудительное завершение через 3 секунды ТОЛЬКО при сигнале
         if (signalShutdown) {
